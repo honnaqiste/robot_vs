@@ -1,0 +1,31 @@
+<launch>
+  <!-- 1. 指定TurtleBot3型号 -->
+  <arg name="model" default="$(env TURTLEBOT3_MODEL)"/>
+  
+  <!-- 2. 启动你的自定义Gazebo世界（替换成你的世界文件路径） -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <!-- 关键：替换成你自己的gazebo世界文件（.world） -->
+    <arg name="world_name" value="$(find robot_vs)/worlds/world0.world"/>
+    <arg name="paused"      value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui"         value="true"/>
+  </include>
+
+  <!-- 3. 启动单机器人（无命名空间，SLAM能直接找到话题） -->
+  <param name="robot_description" command="$(find xacro)/xacro --inorder $(find turtlebot3_description)/urdf/turtlebot3_$(arg model).urdf.xacro" />
+  
+  <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher_mapping" output="screen">
+    <param name="publish_frequency" type="double" value="50.0" />
+  </node>
+
+  <!-- 在Gazebo中生成机器人 -->
+  <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model" args="-urdf -model tb3_mapping -x 0.0 -y 0.0 -z 0.0 -Y 0.0 -param robot_description" />
+
+  <!-- 4. 启动SLAM建图（用gmapping，最稳定） -->
+  <include file="$(find turtlebot3_slam)/launch/turtlebot3_slam.launch">
+    <arg name="slam_methods" value="gmapping"/>
+  </include>
+
+  <!-- 5. 启动键盘控制（手动遥控机器人建图） -->
+  <!-- <include file="$(find turtlebot3_teleop)/launch/turtlebot3_teleop_key.launch"/> -->
+</launch>
