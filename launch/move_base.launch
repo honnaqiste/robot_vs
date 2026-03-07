@@ -21,6 +21,15 @@
       <rosparam file="$(find robot_vs)/config/turtlebot_param/move_base_params.yaml" command="load" />
       <rosparam file="$(find robot_vs)/config/turtlebot_param/dwa_local_planner_params_$(arg model).yaml" command="load" />
 
+      <rosparam file="$(find robot_vs)/config/mowen_param/costmap_common_params.yaml" command="load" ns="global_costmap" />
+      <rosparam file="$(find robot_vs)/config/mowen_param/costmap_common_params.yaml" command="load" ns="local_costmap" />
+      <rosparam file="$(find robot_vs)/config/mowen_param/local_costmap_params.yaml" command="load" />
+      <rosparam file="$(find robot_vs)/config/mowen_param/global_costmap_params.yaml" command="load" />
+        
+      <rosparam file="$(find robot_vs)/config/mowen_param/move_base_params.yaml" command="load" />
+      <rosparam file="$(find robot_vs)/config/mowen_param/global_planner_params.yaml" command="load" />
+      <rosparam file="$(find robot_vs)/config/mowen_param/dwa_local_planner_params.yaml" command="load" />
+
       <!-- 关键：坐标系配置 -->
       <param name="global_costmap/global_frame" value="$(arg global_frame_id)"/> <!-- map -->
       <param name="global_costmap/robot_base_frame" value="$(arg base_frame_id)"/> <!-- robot_red/base_footprint -->

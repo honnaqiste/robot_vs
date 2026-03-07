@@ -12,19 +12,24 @@
   <!-- ============================================== -->
   <!-- ########## 1. 蓝车硬件驱动模块（必须适配你的小车！）########## -->
   <!-- ============================================== -->
-  <!-- <node pkg="car_bringup" type="newt.py" name="newt"/> -->
 
   <!-- ============================================== -->
   <!-- 2. 机器人发布 -->
   <!-- ============================================== -->
   <group ns="$(arg robot_namespace)">
+    <!--底盘-->
+    <node pkg="car_bringup" type="newt.py" name="newt"/>
     <!-- 加载雷达 -->
     <include file="$(find lslidar_driver)/launch/lslidar_serial.launch" />
-      <!-- 加载机器人模型-->
+    <!-- 加载机器人模型-->
     <include file="$(find mowen)/launch/display.launch" />
+
     <include  file="$(find wit_ros_imu)/launch/wit_imu.launch" />
+
+    <!--?-->
     <node pkg="car_bringup" name="pubv" type="pubv.py"  />
-     <node pkg="car_bringup" type="base_node" name="odometry_publisher">
+    
+    <node pkg="car_bringup" type="base_node" name="odometry_publisher">
         <param name="odom_frame" type="string" value="odom"/>
         <param name="base_footprint_frame" type="string" value="base_footprint"/>
         <param name="linear_scale_x" type="double" value="1.0"/>
