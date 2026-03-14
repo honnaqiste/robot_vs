@@ -1,6 +1,6 @@
 <launch>
   <!-- 1. 核心参数 -->
-  <arg name="map_file" default="$(find robot_vs)/maps/map.yaml" doc="真机场地建好的地图"/>
+  <arg name="map_file" default="$(find robot_vs)/maps/mymap.yaml" doc="真机场地建好的地图"/>
   <arg name="open_rviz" default="true" doc="是否自动启动RViz"/>
 
   <!-- 2. 全局唯一地图服务器（真机只需要在上位机启动1次，所有小车共享） -->
