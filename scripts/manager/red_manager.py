@@ -10,7 +10,7 @@ class RedTeamManager:
         # 初始化节点，指定命名空间
         rospy.init_node("red_team_manager")
         # 红方两台机器人的命名空间列表
-        self.robot_ns_list = ["robot_blue"]  #tempp!!!!!
+        self.robot_ns_list = ["robot_blue","robot_blue2"]  #tempp!!!!!
         
         # 为每台机器人初始化 感知/执行 模块
         self.perception_dict = {}
