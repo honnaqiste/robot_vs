@@ -108,7 +108,7 @@ roscore
 
 ---
 
-## 5. 安装 VS Code
+## 5. 安装 VS Code（也可以用鱼香ros一键安装)
 
 VS Code 用于后续查看和编写代码。
 
