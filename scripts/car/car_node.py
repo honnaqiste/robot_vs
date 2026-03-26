@@ -5,6 +5,7 @@ import sys
 import os
 
 import rospy
+from robot_vs.msg import TaskCommand
 
 # Allow sibling-package imports (skill_manager, task_engine, skills/)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +38,13 @@ class CarAgent(object):
         self.skill_manager = skill_manager if skill_manager is not None else SkillManager(self.ns)
         self.task_engine = task_engine if task_engine is not None else TaskEngine(self.ns, self.skill_manager)
 
+        self._task_sub = rospy.Subscriber(
+            "/{}/task_cmd".format(self.ns),
+            TaskCommand,
+            self._task_cmd_cb,
+            queue_size=10,
+        )
+
         rospy.loginfo(
             "CarAgent initialised: ns=%s loop_hz=%.1f",
             self.ns, self.loop_hz,
@@ -50,6 +58,12 @@ class CarAgent(object):
             except Exception as exc:
                 rospy.logwarn("CarAgent tick failed: %s", exc)
             rate.sleep()
+
+    def _task_cmd_cb(self, msg):
+        try:
+            self.task_engine.accept_task(msg)
+        except Exception as exc:
+            rospy.logwarn("[%s] task callback failed: %s", self.ns, exc)
 
 
 def main():

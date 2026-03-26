@@ -25,7 +25,7 @@ class BaseSkill(object):
     def status(self):
         return self._status
 
-    def start(self):
+    def start(self, params=None):
         """Initialise the skill. Called once before the first update()."""
         pass
 

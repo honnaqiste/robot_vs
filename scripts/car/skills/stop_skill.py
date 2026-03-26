@@ -15,7 +15,7 @@ class StopSkill(BaseSkill):
     command is re-published every tick.
     """
 
-    def start(self):
+    def start(self, params=None):
         self.skill_manager.publish_stop_velocity()
         rospy.loginfo("[%s] StopSkill start", self.skill_manager.ns)
 

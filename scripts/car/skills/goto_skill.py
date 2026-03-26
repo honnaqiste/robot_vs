@@ -18,13 +18,17 @@ class GoToSkill(BaseSkill):
     _STATUS_SUCCEEDED = 3
     _STATUS_FAILED = {4, 5, 8, 9}  # ABORTED, REJECTED, LOST, etc.
 
-    def __init__(self, skill_manager, target_x, target_y, frame_id="map"):
+    def __init__(self, skill_manager, frame_id="map"):
         super(GoToSkill, self).__init__(skill_manager)
-        self.target_x = float(target_x)
-        self.target_y = float(target_y)
+        self.target_x = 0.0
+        self.target_y = 0.0
         self.frame_id = str(frame_id)
 
-    def start(self):
+    def start(self, params=None):
+        params = params or {}
+        self.target_x = float(params.get("target_x", 0.0))
+        self.target_y = float(params.get("target_y", 0.0))
+
         goal = PoseStamped()
         goal.header.stamp = rospy.Time.now()
         goal.header.frame_id = self.frame_id

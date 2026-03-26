@@ -4,22 +4,20 @@
 import threading
 
 import rospy
-from robot_vs.msg import RobotState, TaskCommand
-from std_msgs.msg import Header
+from robot_vs.msg import TaskCommand
 
 from skills.base_skill import RUNNING, SUCCESS, FAILED
 
 
 class TaskEngine(object):
-    """Receive TaskCommand messages and drive skill execution.
+    """Maintain current task and drive skill execution.
 
     Responsibilities:
-    1) Subscribe to /<ns>/task_cmd (TaskCommand) for incoming tasks.
+    1) Keep current task snapshot received from car_node.
     2) Instantiate the appropriate skill via SkillManager on task change.
     3) On every tick(), call the current skill's update() and handle
        transitions (RUNNING → SUCCESS / FAILED).
-    4) Publish /<ns>/robot_state (RobotState) with current execution
-       feedback so the Manager can monitor progress.
+    4) Monitor task timeout and fail-safe to STOP.
     """
 
     def __init__(self, ns, skill_manager):
@@ -27,33 +25,24 @@ class TaskEngine(object):
         self.skill_manager = skill_manager
 
         self._lock = threading.RLock()
-        self._current_task = None   # latest TaskCommand msg
-        self._current_skill = None  # active BaseSkill instance
+        self._current_task = None   # latest task dict
         self._task_status = "IDLE"  # IDLE / RUNNING / SUCCESS / FAILED
         self._current_action = "NONE"
-
-        self._task_sub = rospy.Subscriber(
-            "/{}/task_cmd".format(self.ns),
-            TaskCommand,
-            self._task_cmd_cb,
-            queue_size=5,
-        )
-        self._state_pub = rospy.Publisher(
-            "/{}/robot_state".format(self.ns),
-            RobotState,
-            queue_size=5,
-        )
+        self._task_start_t = None
 
         rospy.loginfo("[%s] TaskEngine initialised", self.ns)
 
     # ------------------------------------------------------------------
-    # Subscriber callback
+    # Task receiver
     # ------------------------------------------------------------------
 
-    def _task_cmd_cb(self, msg):
+    def accept_task(self, msg):
+        if not isinstance(msg, TaskCommand):
+            raise ValueError("accept_task expects TaskCommand")
+
         with self._lock:
             current = self._current_task
-            if current is not None and current.task_id == msg.task_id:
+            if current is not None and int(current.get("task_id", 0)) == int(msg.task_id):
                 return  # same task, ignore duplicate
 
             rospy.loginfo(
@@ -61,14 +50,6 @@ class TaskEngine(object):
                 self.ns, msg.task_id, msg.action_type, msg.target_x, msg.target_y,
             )
 
-            # Stop the old skill
-            if self._current_skill is not None:
-                try:
-                    self._current_skill.stop()
-                except Exception as exc:
-                    rospy.logwarn("[%s] skill.stop() raised: %s", self.ns, exc)
-
-            # Build task dict for the skill factory
             task_dict = {
                 "task_id": msg.task_id,
                 "action_type": msg.action_type,
@@ -78,17 +59,21 @@ class TaskEngine(object):
                 "reason": msg.reason,
                 "timeout": msg.timeout,
             }
-
-            new_skill = self.skill_manager.make_skill(msg.action_type, task_dict)
             try:
-                new_skill.start()
+                self.skill_manager.switch_skill(msg.action_type, task_dict)
             except Exception as exc:
-                rospy.logwarn("[%s] skill.start() raised: %s", self.ns, exc)
+                rospy.logwarn("[%s] switch_skill failed: %s", self.ns, exc)
 
-            self._current_task = msg
-            self._current_skill = new_skill
+            self._current_task = task_dict
+            self._task_start_t = rospy.Time.now().to_sec()
             self._task_status = RUNNING
             self._current_action = str(msg.action_type).upper()
+            self.skill_manager.set_task_feedback(
+                task_id=int(msg.task_id),
+                current_action=self._current_action,
+                task_status=self._task_status,
+                mode=int(msg.mode),
+            )
 
     # ------------------------------------------------------------------
     # Main loop step
@@ -98,14 +83,37 @@ class TaskEngine(object):
         """Called every loop iteration from car_node."""
         with self._lock:
             task = self._current_task
-            skill = self._current_skill
+            task_status = self._task_status
+            task_start_t = self._task_start_t
 
-        if skill is None:
-            self._publish_robot_state()
+        if task is None:
+            self.skill_manager.set_task_feedback(
+                task_id=0,
+                current_action="NONE",
+                task_status="IDLE",
+                mode=0,
+            )
+            return
+
+        if task_status == RUNNING and self._is_task_timeout(task, task_start_t):
+            rospy.logwarn("[%s] task timeout: task_id=%s", self.ns, task.get("task_id"))
+            with self._lock:
+                self._task_status = FAILED
+            self.skill_manager.stop_active_skill()
+            try:
+                self.skill_manager.switch_skill("STOP", self._build_timeout_stop_task(task))
+            except Exception as exc:
+                rospy.logwarn("[%s] timeout stop switch failed: %s", self.ns, exc)
+            self.skill_manager.set_task_feedback(
+                task_id=int(task.get("task_id", 0)),
+                current_action=str(task.get("action_type", "NONE")).upper(),
+                task_status=FAILED,
+                mode=int(task.get("mode", 0)),
+            )
             return
 
         try:
-            result = skill.update()
+            result = self.skill_manager.update_active_skill()
         except Exception as exc:
             rospy.logwarn("[%s] skill.update() raised: %s", self.ns, exc)
             result = FAILED
@@ -113,26 +121,31 @@ class TaskEngine(object):
         with self._lock:
             self._task_status = result
 
-        self._publish_robot_state()
+        self.skill_manager.set_task_feedback(
+            task_id=int(task.get("task_id", 0)),
+            current_action=self._current_action,
+            task_status=self._task_status,
+            mode=int(task.get("mode", 0)),
+        )
 
-    # ------------------------------------------------------------------
-    # State publisher
-    # ------------------------------------------------------------------
+    def _is_task_timeout(self, task, task_start_t):
+        if task_start_t is None:
+            return False
 
-    def _publish_robot_state(self):
-        with self._lock:
-            task = self._current_task
-            task_status = self._task_status
-            current_action = self._current_action
+        timeout = float(task.get("timeout", 0.0) or 0.0)
+        if timeout <= 0.0:
+            return False
 
-        msg = RobotState()
-        msg.header = Header()
-        msg.header.stamp = rospy.Time.now()
-        msg.header.frame_id = "map"
-        msg.robot_ns = self.ns
-        msg.alive = True
-        msg.current_task_id = int(task.task_id) if task is not None else 0
-        msg.current_action = current_action
-        msg.task_status = task_status
+        elapsed = rospy.Time.now().to_sec() - float(task_start_t)
+        return elapsed > timeout
 
-        self._state_pub.publish(msg)
+    def _build_timeout_stop_task(self, task):
+        return {
+            "task_id": int(task.get("task_id", 0)),
+            "action_type": "STOP",
+            "target_x": 0.0,
+            "target_y": 0.0,
+            "mode": 0,
+            "reason": "timeout",
+            "timeout": 0.0,
+        }
