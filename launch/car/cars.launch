@@ -1,0 +1,30 @@
+<launch>
+    <!-- 红方小车 1 -->
+    <group ns="robot_red">
+        <node pkg="robot_vs" type="car_node.py" name="car_agent" output="screen">
+            <rosparam command="load" file="$(find robot_vs)/config/car/red_car.yaml" />
+        </node>
+        <!-- 如果你跑仿真，底层驱动节点已经在仿真launch里了，这里就不需要写底层驱动节点了 -->
+    </group>
+
+    <!-- 红方小车 2 -->
+    <!-- <group ns="robot_red2">
+        <node pkg="robot_vs" type="car_node.py" name="car_agent" output="screen">
+            <rosparam command="load" file="$(find robot_vs)/config/car/red_car.yaml" />
+        </node>
+    </group> -->
+
+    <!-- 蓝方小车 1 -->
+    <group ns="robot_blue">
+        <node pkg="robot_vs" type="car_node.py" name="car_agent" output="screen">
+            <rosparam command="load" file="$(find robot_vs)/config/car/blue_car.yaml" />
+        </node>
+    </group>
+
+    <!-- 蓝方小车 2 -->
+    <!-- <group ns="robot_blue2">
+        <node pkg="robot_vs" type="car_node.py" name="car_agent" output="screen">
+            <rosparam command="load" file="$(find robot_vs)/config/car/blue_car.yaml" />
+        </node>
+    </group> -->
+</launch>

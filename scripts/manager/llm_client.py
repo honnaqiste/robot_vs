@@ -3,6 +3,8 @@
 
 import json
 
+import rospy
+
 
 class LLMClient(object):
     """Rule-based planner (Mock LLM).
@@ -27,6 +29,10 @@ class LLMClient(object):
             {"x": 0.0, "y": 1.5},
         ]
         self._flank_offset = float(flank_offset)
+        self._patrol_hold_s = 3.0
+        # Per-robot patrol state for no-enemy behavior.
+        # {robot_id: {"idx": int, "hold_until": float, "last_success_task_id": int}}
+        self._patrol_state = {}
 
     def plan_tasks(self, battle_state):
         """Plan tasks from battle state using deterministic rules.
@@ -53,11 +59,11 @@ class LLMClient(object):
         tasks = {}
         for idx, robot_id in enumerate(robot_ids):
             state_entry = friendly.get(robot_id, {})
-            tasks[robot_id] = self._plan_single_robot_task(state_entry, idx, visible_enemies)
+            tasks[robot_id] = self._plan_single_robot_task(robot_id, state_entry, idx, visible_enemies)
 
         return tasks
 
-    def _plan_single_robot_task(self, state_entry, robot_index, visible_enemies):
+    def _plan_single_robot_task(self, robot_id, state_entry, robot_index, visible_enemies):
         if self._is_robot_data_missing(state_entry):
             return self._stop_task("missing/stale robot state", timeout=1.5)
 
@@ -73,7 +79,7 @@ class LLMClient(object):
             return self._stop_task("robot not alive", timeout=5.0)
 
         if task_status in ("FAILED", "ABORTED", "TIMEOUT"):
-            retry_point = self._get_patrol_point(robot_index)
+            retry_point = self._get_patrol_point(robot_id, robot_index)
             return self._build_task(
                 action="GOTO",
                 target=retry_point,
@@ -86,7 +92,7 @@ class LLMClient(object):
         if hp < 20.0 or ammo <= 0.0:
             return self._build_task(
                 action="GOTO",
-                target=self._get_safe_point(robot_index),
+                target=self._get_safe_point(robot_id, robot_index),
                 mode=3,
                 reason="retreat (low hp/ammo)",
                 timeout=6.0,
@@ -127,19 +133,65 @@ class LLMClient(object):
         if ammo <= 5.0:
             return self._build_task(
                 action="GOTO",
-                target=self._get_safe_point(robot_index),
+                target=self._get_safe_point(robot_id, robot_index),
                 mode=3,
                 reason="retreat (low ammo)",
                 timeout=5.0,
             )
 
+        patrol_transition_task = self._next_patrol_task_if_ready(
+            robot_id=robot_id,
+            robot_index=robot_index,
+            state=state,
+            task_status=task_status,
+            current_action=current_action,
+        )
+        if patrol_transition_task is not None:
+            return patrol_transition_task
+
         return self._build_task(
             action="GOTO",
-            target=self._get_patrol_point(robot_index),
+            target=self._get_patrol_point(robot_id, robot_index),
             mode=1,
             reason="patrol (no visible enemy)",
             timeout=8.0,
         )
+
+    def _next_patrol_task_if_ready(self, robot_id, robot_index, state, task_status, current_action):
+        patrol_state = self._get_patrol_state(robot_id, robot_index)
+        now = self._now()
+
+        current_task_id = int(self._to_float(self._read_value(state, "current_task_id", 0), 0))
+        last_success_task_id = int(patrol_state.get("last_success_task_id", -1))
+
+        # When a GOTO task succeeds, enter a short hold phase before switching waypoint.
+        if task_status == "SUCCESS" and current_action == "GOTO" and current_task_id != last_success_task_id:
+            patrol_state["last_success_task_id"] = current_task_id
+            patrol_state["hold_until"] = now + self._patrol_hold_s
+            return self._build_task(
+                action="STOP",
+                target={"x": 0.0, "y": 0.0},
+                mode=1,
+                reason="patrol hold before next waypoint",
+                timeout=self._patrol_hold_s,
+            )
+
+        hold_until = float(patrol_state.get("hold_until", 0.0) or 0.0)
+        if hold_until > now:
+            return self._build_task(
+                action="STOP",
+                target={"x": 0.0, "y": 0.0},
+                mode=1,
+                reason="patrol hold before next waypoint",
+                timeout=max(0.5, hold_until - now),
+            )
+
+        if hold_until > 0.0 and hold_until <= now:
+            patrol_state["hold_until"] = 0.0
+            if self._patrol_points:
+                patrol_state["idx"] = (int(patrol_state.get("idx", 0)) + 1) % len(self._patrol_points)
+
+        return None
 
     def _extract_friendly_robots(self, battle_state):
         context = self._extract_context(battle_state)
@@ -239,17 +291,35 @@ class LLMClient(object):
             timeout=timeout,
         )
 
-    def _get_patrol_point(self, robot_index):
+    def _get_patrol_point(self, robot_id, robot_index):
         if not self._patrol_points:
             return {"x": 0.0, "y": 0.0}
-        return self._normalize_patrol_point(self._patrol_points[robot_index % len(self._patrol_points)])
 
-    def _get_safe_point(self, robot_index):
-        patrol = self._get_patrol_point(robot_index)
+        patrol_state = self._get_patrol_state(robot_id, robot_index)
+        idx = int(patrol_state.get("idx", 0)) % len(self._patrol_points)
+        return self._normalize_patrol_point(self._patrol_points[idx])
+
+    def _get_safe_point(self, robot_id, robot_index):
+        patrol = self._get_patrol_point(robot_id, robot_index)
         return {
             "x": patrol["x"] - self._flank_offset,
             "y": patrol["y"] - self._flank_offset,
         }
+
+    def _get_patrol_state(self, robot_id, robot_index):
+        if robot_id not in self._patrol_state:
+            seed_idx = robot_index
+            if self._patrol_points:
+                seed_idx = robot_index % len(self._patrol_points)
+            self._patrol_state[robot_id] = {
+                "idx": seed_idx,
+                "hold_until": 0.0,
+                "last_success_task_id": -1,
+            }
+        return self._patrol_state[robot_id]
+
+    def _now(self):
+        return rospy.Time.now().to_sec()
 
     def _read_value(self, obj, key, default=None):
         if obj is None:

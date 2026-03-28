@@ -7,6 +7,7 @@ import rospy
 from robot_vs.msg import TaskCommand
 
 from skills.base_skill import RUNNING, SUCCESS, FAILED
+from skill_manager import SkillManager
 
 
 class TaskEngine(object):

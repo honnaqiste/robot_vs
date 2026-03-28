@@ -1,0 +1,4 @@
+loop_hz: 10.0
+team: 0          # 0代表红方
+default_hp: 100.0
+default_ammo: 50.0

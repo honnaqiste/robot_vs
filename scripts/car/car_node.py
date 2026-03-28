@@ -28,7 +28,7 @@ class CarAgent(object):
     def __init__(self, ns=None, loop_hz=None, skill_manager=None, task_engine=None):
         # Resolve namespace: prefer explicit arg, then ROS namespace.
         if ns is None:
-            ns = rospy.get_namespace().strip("/")
+            ns = rospy.get_namespace().strip("/") # from ns(<group>),instedf of params.get("~ns", "car")
         self.ns = str(ns) if ns else "car"
 
         if loop_hz is None:
