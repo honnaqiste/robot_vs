@@ -56,6 +56,7 @@
         <param name="world_frame" value="$(arg robot_namespace)/odom"/>
         <param name="base_link_frame" value="$(arg robot_namespace)/base_footprint"/>
         <rosparam command="load" file="$(find car_bringup)/param/robot_localization.yaml"/>
+        <param name="imu0_frame" value="$(arg robot_namespace)/base_link"/>
     </node>
   </group>
 
