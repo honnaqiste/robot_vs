@@ -59,7 +59,7 @@ class PatrolPolicy(object):
     """简单巡逻策略：距离到点 -> 停留 -> 切下一个目标。"""
 
     def __init__(self, robot_ns_list):
-        self.patrol_points = [(0.5, 0.0), (-1.0, 1.0), (0.0, 1.0)]
+        self.patrol_points = [(-0.889, 1.6), (-2.59, 0.767), (-0.156, 0.2)]
         self.arrive_radius = 0.15
         self.arrive_hold_s = 3.0
 
