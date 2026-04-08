@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import json
+import math
+import random
 
 import rospy
 
@@ -20,7 +22,7 @@ class LLMClient(object):
     }
     """
 
-    def __init__(self, planner_fn=None, patrol_points=None, flank_offset=1.0):
+    def __init__(self, planner_fn=None, patrol_points=None, flank_offset=0.1):
         self._planner_fn = planner_fn
         self._patrol_points = patrol_points or [
             {"x": 1.5, "y": 0.0},
@@ -102,11 +104,12 @@ class LLMClient(object):
             enemy = visible_enemies[robot_index % len(visible_enemies)]
             enemy_x = self._to_float(enemy.get("x", 0.0), 0.0)
             enemy_y = self._to_float(enemy.get("y", 0.0), 0.0)
+            engage_target = self._random_near_enemy_point(enemy_x, enemy_y)
 
             if in_combat or current_action == "ATTACK":
                 return self._build_task(
                     action="ATTACK",
-                    target={"x": enemy_x, "y": enemy_y},
+                    target=engage_target,
                     mode=2,
                     reason="engage visible enemy",
                     timeout=2.0,
@@ -115,16 +118,17 @@ class LLMClient(object):
             if robot_index % 2 == 0:
                 return self._build_task(
                     action="GOTO",
-                    target={"x": enemy_x, "y": enemy_y},
+                    target=engage_target,
                     mode=2,
                     reason="contain visible enemy",
                     timeout=4.0,
                 )
 
             flank_y = enemy_y + self._flank_offset if ((robot_index // 2) % 2 == 0) else enemy_y - self._flank_offset
+            flank_target = self._random_near_enemy_point(enemy_x + self._flank_offset, flank_y)
             return self._build_task(
                 action="GOTO",
-                target={"x": enemy_x + self._flank_offset, "y": flank_y},
+                target=flank_target,
                 mode=2,
                 reason="flank visible enemy",
                 timeout=4.0,
@@ -351,6 +355,17 @@ class LLMClient(object):
             }
 
         return {"x": 0.0, "y": 0.0}
+
+    def _random_near_enemy_point(self, x, y):
+        # 在敌人附近生成随机目标点，避免直接重合导致拥挤/碰撞。
+        radius_min = max(0.05, self._flank_offset * 0.8)
+        radius_max = max(radius_min + 0.05, self._flank_offset * 2.5)
+        theta = random.uniform(0.0, 2.0 * 3.1415926)
+        radius = random.uniform(radius_min, radius_max)
+        return {
+            "x": float(x) + radius * math.cos(theta),
+            "y": float(y) + radius * math.sin(theta),
+        }
 
     def _call_remote_llm(self, prompt):
         """预留：调用真实远端 LLM API 并返回原始文本。"""

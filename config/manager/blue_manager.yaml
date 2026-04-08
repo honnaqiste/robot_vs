@@ -1,5 +1,6 @@
 team_color: "blue"
-my_cars: ["robot_blue"] #"robot_blue2"
+# my_cars: ["robot_blue", "robot_blue2"]
+my_cars: ["robot_blue"] #"robot_blue2" --- IGNORE ---
 loop_hz: 1
 state_timeout_s: 5.0
 default_patrol_points:

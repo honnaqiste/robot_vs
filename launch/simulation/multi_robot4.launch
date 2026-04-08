@@ -1,7 +1,7 @@
 <launch>
   <!-- 1. 核心参数 -->
   <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="burger, waffle, waffle_pi"/>
-  <arg name="map_file" default="$(find robot_vs)/maps/map.yaml" doc="全局地图路径"/>
+  <arg name="map_file" default="$(find robot_vs)/maps/map_simulation.yaml" doc="全局地图路径"/>
   <arg name="world_file" default="$(find robot_vs)/worlds/world0.world" doc="仿真世界"/>
 
   <!-- 2. 最先启动map_server -->
@@ -36,7 +36,7 @@
   </group>
 
   <!-- 4.4 启动红方AMCL -->
-  <include file="$(find robot_vs)/launch/amcl.launch">
+  <include file="$(find robot_vs)/launch/simulation/amcl.launch">
     <arg name="robot_namespace" value="robot_red" />
     <arg name="initial_pose_x" value="-2.0"/>
     <arg name="initial_pose_y" value="0.5"/>
@@ -44,7 +44,7 @@
   </include>
 
   <!-- 4.5 启动红方move_base -->
-  <include file="$(find robot_vs)/launch/move_base.launch">
+  <include file="$(find robot_vs)/launch/simulation/move_base.launch">
     <arg name="robot_namespace" value="robot_red" />
   </include>
 
@@ -62,14 +62,14 @@
           args="-urdf -model robot_red2 -x -2.0 -y -0.5 -z 0.0 -Y 0.0 -param /robot_red2/robot_description"/>
   </group>
 
-  <include file="$(find robot_vs)/launch/amcl.launch">
+  <include file="$(find robot_vs)/launch/simulation/amcl.launch">
     <arg name="robot_namespace" value="robot_red2" />
     <arg name="initial_pose_x" value="-2.0"/>
     <arg name="initial_pose_y" value="-0.5"/>
     <arg name="initial_pose_a" value="0.0"/>
   </include>
 
-  <include file="$(find robot_vs)/launch/move_base.launch">
+  <include file="$(find robot_vs)/launch/simulation/move_base.launch">
     <arg name="robot_namespace" value="robot_red2" />
   </include>
 
@@ -93,7 +93,7 @@
   </group>
 
   <!-- 5.4 启动蓝方AMCL -->
-  <include file="$(find robot_vs)/launch/amcl.launch">
+  <include file="$(find robot_vs)/launch/simulation/amcl.launch">
     <arg name="robot_namespace" value="robot_blue" />
     <arg name="initial_pose_x" value="2.0"/>
     <arg name="initial_pose_y" value="0.5"/>
@@ -101,7 +101,7 @@
   </include>
 
   <!-- 5.5 启动蓝方move_base -->
-  <include file="$(find robot_vs)/launch/move_base.launch">
+  <include file="$(find robot_vs)/launch/simulation/move_base.launch">
     <arg name="robot_namespace" value="robot_blue" />
   </include>
 
@@ -118,13 +118,13 @@
     <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model" output="screen"
           args="-urdf -model robot_blue2 -x 2.0 -y -0.5 -z 0.0 -Y 3.14 -param /robot_blue2/robot_description"/>
   </group>
-  <include file="$(find robot_vs)/launch/amcl.launch">
+  <include file="$(find robot_vs)/launch/simulation/amcl.launch">
     <arg name="robot_namespace" value="robot_blue2" />
     <arg name="initial_pose_x" value="2.0"/>
     <arg name="initial_pose_y" value="-0.5"/>
     <arg name="initial_pose_a" value="3.14"/>
   </include>
-  <include file="$(find robot_vs)/launch/move_base.launch">
+  <include file="$(find robot_vs)/launch/simulation/move_base.launch">
     <arg name="robot_namespace" value="robot_blue2" />
   </include>
 
