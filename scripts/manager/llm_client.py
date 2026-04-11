@@ -117,7 +117,7 @@ class LLMClient(object):
 
             if robot_index % 2 == 0:
                 return self._build_task(
-                    action="GOTO",
+                    action="ATTACK",
                     target=engage_target,
                     mode=2,
                     reason="contain visible enemy",
