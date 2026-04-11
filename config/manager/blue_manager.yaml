@@ -8,6 +8,6 @@ default_patrol_points:
   - [-1.0, -1.0]
   - [0.0, -1.2]
 llm:
-  enabled: false
-  model: "gpt-4o-mini"
-  timeout_s: 8
+  enabled: true
+  service_url: "http://127.0.0.1:8001/plan"
+  # timeout_s: 120

@@ -6,10 +6,11 @@ import math
 import random
 
 import rospy
+import requests
 
 
 class LLMClient(object):
-    """基于规则的任务规划器（模拟 LLM）。
+    """基于规则的任务规划器（模拟 LLM) 。
 
     输出格式：
     {
@@ -22,7 +23,8 @@ class LLMClient(object):
     }
     """
 
-    def __init__(self, planner_fn=None, patrol_points=None, flank_offset=0.1):
+    def __init__(self, planner_fn=None, patrol_points=None, flank_offset=0.1,
+                 use_llm=True, llm_service_url="http://127.0.0.1:8001/plan", llm_timeout_s=8.0):
         self._planner_fn = planner_fn
         self._patrol_points = patrol_points or [
             {"x": 1.5, "y": 0.0},
@@ -35,6 +37,9 @@ class LLMClient(object):
         # 无敌人场景下的逐车巡逻状态。
         # {robot_id: {"idx": int, "hold_until": float, "last_success_task_id": int}}
         self._patrol_state = {}
+        self._use_llm = bool(use_llm)
+        self._llm_service_url = str(llm_service_url)
+        self._llm_timeout_s = float(llm_timeout_s)
 
     def plan_tasks(self, battle_state):
         """根据战场状态按确定性规则规划任务。
@@ -56,6 +61,25 @@ class LLMClient(object):
         robot_ids, friendly = self._extract_friendly_robots(battle_state)
         if not robot_ids:
             return {}
+
+        if self._use_llm:
+            try:
+                payload = {
+                    "battle_state": battle_state,
+                    "robot_ids": list(robot_ids),
+                }
+                response = requests.post(
+                    self._llm_service_url,
+                    json=payload,
+                    timeout=self._llm_timeout_s,
+                )
+                response.raise_for_status()
+                parsed = response.json()
+                if isinstance(parsed, dict) and isinstance(parsed.get("tasks"), dict):
+                    parsed = parsed.get("tasks")
+                return self._normalize_llm_tasks(parsed, robot_ids)
+            except Exception as exc:
+                rospy.logwarn("LLMClient: LLM planning failed, use rule fallback: %s", exc)
 
         visible_enemies = self._extract_visible_enemies(battle_state)
         tasks = {}
@@ -367,13 +391,34 @@ class LLMClient(object):
             "y": float(y) + radius * math.sin(theta),
         }
 
-    def _call_remote_llm(self, prompt):
-        """预留：调用真实远端 LLM API 并返回原始文本。"""
-        raise NotImplementedError("Remote LLM API is not connected yet")
+    def _normalize_llm_tasks(self, tasks, robot_ids):
+        if not isinstance(tasks, dict):
+            raise ValueError("LLM tasks must be a dict")
 
-    def _parse_llm_json(self, text):
-        """预留：解析远端 LLM 返回的 JSON 文本。"""
-        data = json.loads(text)
-        if not isinstance(data, dict):
-            raise ValueError("LLM response must be a dict")
-        return data
+        result = {}
+        for robot_id in robot_ids:
+            raw = tasks.get(robot_id)
+            if not isinstance(raw, dict):
+                result[robot_id] = self._stop_task("llm missing robot task", timeout=2.0)
+                continue
+
+            action = str(raw.get("action", "STOP")).upper()
+            if action not in ("STOP", "GOTO", "ATTACK"):
+                action = "STOP"
+
+            target = raw.get("target", {"x": 0.0, "y": 0.0})
+            target = self._normalize_patrol_point(target)
+
+            mode = int(self._to_float(raw.get("mode", 0), 0))
+            reason = str(raw.get("reason", "llm decision"))
+            timeout = self._to_float(raw.get("timeout", 2.0), 2.0)
+            timeout = max(0.5, min(30.0, timeout))
+
+            result[robot_id] = self._build_task(
+                action=action,
+                target=target,
+                mode=mode,
+                reason=reason,
+                timeout=timeout,
+            )
+        return result
