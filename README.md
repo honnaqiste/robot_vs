@@ -71,4 +71,5 @@ roslaunch robot_vs cars.launch
 | 真机局域网下通信测试 | ✅ 已完成 |
 | Car Agent + Skill 系统 | ✅ 已完成 |
 | 裁判系统对接 | 🚧 进行中 |
+| 大模型接入 | 🚧 进行中 |
 | 现实环境部署 | 🚧 进行中 |
