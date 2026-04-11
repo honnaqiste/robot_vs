@@ -15,7 +15,6 @@ from robot_vs.msg import FireEvent
 from robot_vs.msg import RobotState
 
 from skills.base_skill import RUNNING, FAILED
-from actionlib_msgs.msg import GoalID
 
 
 class SkillManager(object):
