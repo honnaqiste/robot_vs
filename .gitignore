@@ -21,3 +21,5 @@ Thumbs.db
 # 临时数据
 *.bag
 *.log
+
+*.jsonl

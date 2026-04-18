@@ -12,7 +12,7 @@ RED_PID=""
 BLUE_PID=""
 
 # 这个路径因人而异，注意看自己电脑
-__conda_setup="$('/home/xqrion/miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
+__conda_setup="$('$HOME/miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
 if [ $? -eq 0 ]; then
     eval "$__conda_setup"
 else
