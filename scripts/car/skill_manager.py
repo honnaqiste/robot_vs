@@ -7,7 +7,7 @@ import actionlib  # 预留给后续 action client 集成使用。
 import rospy
 from actionlib_msgs.msg import GoalID
 from geometry_msgs.msg import PoseStamped, Twist
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, OccupancyGrid
 from move_base_msgs.msg import MoveBaseActionResult
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from tf.transformations import euler_from_quaternion
@@ -35,6 +35,7 @@ class SkillManager(object):
         self.nav_status_code = -1  # -1 表示尚未收到导航结果
         self._latest_pose = None
         self._latest_twist = Twist()
+        self._map_info = None
 
         self.active_skill = None
         self.active_action = "NONE"
@@ -110,6 +111,12 @@ class SkillManager(object):
             BattleMacroState,
             self._macro_state_cb,
             queue_size=10,
+        )
+        self._map_sub = rospy.Subscriber(
+            "/map",
+            OccupancyGrid,
+            self._map_cb,
+            queue_size=1,
         )
 
         self._state_timer = rospy.Timer(rospy.Duration(0.1), self._publish_robot_state)
@@ -216,6 +223,16 @@ class SkillManager(object):
 
     def _nav_result_cb(self, msg):
         self.nav_status_code = msg.status.status
+
+    def _map_cb(self, msg):
+        with self._lock:
+            self._map_info = {
+                'origin_x': msg.info.origin.position.x,
+                'origin_y': msg.info.origin.position.y,
+                'width': msg.info.width,
+                'height': msg.info.height,
+                'resolution': msg.info.resolution
+            }
 
     def _odom_cb(self, msg):
         with self._lock:
@@ -368,6 +385,10 @@ class SkillManager(object):
         q = pose.orientation
         _, _, yaw = euler_from_quaternion([q.x, q.y, q.z, q.w])
         return yaw
+
+    def get_map_info(self):
+        with self._lock:
+            return self._map_info
 
     # ------------------------------------------------------------------
     # RobotState 发布
