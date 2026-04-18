@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import math
 import threading
 
 import actionlib  # 预留给后续 action client 集成使用。
@@ -231,7 +232,8 @@ class SkillManager(object):
                 'origin_y': msg.info.origin.position.y,
                 'width': msg.info.width,
                 'height': msg.info.height,
-                'resolution': msg.info.resolution
+                'resolution': msg.info.resolution,
+                'data': list(msg.data),
             }
 
     def _odom_cb(self, msg):
@@ -389,6 +391,74 @@ class SkillManager(object):
     def get_map_info(self):
         with self._lock:
             return self._map_info
+
+    def world_to_map_index(self, x, y):
+        """世界坐标 -> 栅格索引 (ix, iy)。若无地图或越界则返回 None。"""
+        with self._lock:
+            map_info = self._map_info
+
+        if not map_info:
+            return None
+
+        res = float(map_info.get('resolution', 0.0) or 0.0)
+        if res <= 0.0:
+            return None
+
+        origin_x = float(map_info.get('origin_x', 0.0))
+        origin_y = float(map_info.get('origin_y', 0.0))
+        width = int(map_info.get('width', 0) or 0)
+        height = int(map_info.get('height', 0) or 0)
+        if width <= 0 or height <= 0:
+            return None
+
+        ix = int(math.floor((float(x) - origin_x) / res))
+        iy = int(math.floor((float(y) - origin_y) / res))
+        if ix < 0 or iy < 0 or ix >= width or iy >= height:
+            return None
+        return ix, iy
+
+    def get_map_cell_value(self, ix, iy):
+        """读取 OccupancyGrid 指定栅格值。越界或无数据时返回 None。"""
+        with self._lock:
+            map_info = self._map_info
+
+        if not map_info:
+            return None
+
+        width = int(map_info.get('width', 0) or 0)
+        height = int(map_info.get('height', 0) or 0)
+        if width <= 0 or height <= 0:
+            return None
+        if ix < 0 or iy < 0 or ix >= width or iy >= height:
+            return None
+
+        data = map_info.get('data')
+        if data is None:
+            return None
+
+        idx = iy * width + ix
+        if idx < 0 or idx >= len(data):
+            return None
+        return int(data[idx])
+
+    def is_world_point_navigable(self, x, y, occupied_threshold=65, unknown_as_obstacle=True):
+        """判断世界坐标点是否可通行。"""
+        with self._lock:
+            has_map = self._map_info is not None
+        if not has_map:
+            # 地图尚未就绪时不阻断导航，退化为“可通行”。
+            return True
+
+        map_idx = self.world_to_map_index(x, y)
+        if map_idx is None:
+            return False
+
+        val = self.get_map_cell_value(map_idx[0], map_idx[1])
+        if val is None:
+            return True
+        if val < 0:
+            return not bool(unknown_as_obstacle)
+        return val < int(occupied_threshold)
 
     # ------------------------------------------------------------------
     # RobotState 发布
