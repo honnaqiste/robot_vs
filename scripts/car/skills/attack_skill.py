@@ -36,6 +36,10 @@ class AttackSkill(BaseSkill):
         self._last_fire_ts = None
         self._start_ts = rospy.Time.now().to_sec()
         self._last_pose_ts = None
+
+        # Cancel navigation so move_base stops publishing cmd_vel during attack.
+        self.skill_manager.cancel_nav_goal()
+        self.skill_manager.publish_stop_velocity()
         self._status = RUNNING
 
         rospy.loginfo(
