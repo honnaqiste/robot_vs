@@ -44,6 +44,7 @@ class SideMASRuntime:
 		prompts_cfg: Mapping[str, Any],
 		ltm_storage_path: Optional[Path] = None,
 		stm_window_size: int = 16,
+		ltm_enabled: Optional[bool] = None,
 	) -> None:
 		normalized_side = _normalize_side(side)
 		if not normalized_side:
@@ -60,8 +61,20 @@ class SideMASRuntime:
 		self.leader_interval_s = max(0.5, _as_float(runtime_cfg.get("leader_loop_interval_s", 5.0), 5.0))
 		self.car_interval_s = max(0.2, _as_float(runtime_cfg.get("car_loop_interval_s", 1.0), 1.0))
 
+		configured_ltm = _as_bool(runtime_cfg.get("enable_ltm", True), True)
+		env_disable_ltm = _as_bool(os.getenv("MAS_DISABLE_LTM"), False)
+		env_enable_ltm = _as_bool(os.getenv("MAS_ENABLE_LTM"), False)
+		if ltm_enabled is None:
+			self.ltm_enabled = configured_ltm
+			if env_disable_ltm:
+				self.ltm_enabled = False
+			if env_enable_ltm:
+				self.ltm_enabled = True
+		else:
+			self.ltm_enabled = bool(ltm_enabled)
+
 		self.stm = ShortTermMemory(max_items=max(4, int(stm_window_size)))
-		self.ltm = LongTermMemory(storage_path=ltm_storage_path)
+		self.ltm = LongTermMemory(storage_path=ltm_storage_path, enabled=self.ltm_enabled)
 		self.leader_agent = LeaderAgent(
 			llm_client=self.llm_client,
 			models_cfg=self.models_cfg,
@@ -179,6 +192,7 @@ class SideMASRuntime:
 			"robot_count": len(robot_ids),
 			"task_count": len(tasks),
 			"has_state": bool(state),
+			"ltm_enabled": self.ltm_enabled,
 			"task_age_s": max(0.0, time.time() - tasks_ts) if tasks_ts > 0 else None,
 			"leader_age_s": max(0.0, time.time() - leader_ts) if leader_ts > 0 else None,
 			"car_agents": sorted(self._car_agents.keys()),
@@ -307,6 +321,7 @@ class HierarchicalMASManager:
 		prompts_cfg: Mapping[str, Any],
 		enabled_sides: Sequence[str] = ("red", "blue"),
 		ltm_dir: Optional[Path] = None,
+		ltm_enabled: Optional[bool] = None,
 	) -> None:
 		self.models_cfg = dict(models_cfg)
 		self.prompts_cfg = dict(prompts_cfg)
@@ -334,6 +349,7 @@ class HierarchicalMASManager:
 				models_cfg=side_models_cfg,
 				prompts_cfg=self.prompts_cfg,
 				ltm_storage_path=side_path,
+				ltm_enabled=ltm_enabled,
 			)
 
 			leader_cfg = side_models_cfg.get("leader_model", {})
@@ -357,6 +373,7 @@ class HierarchicalMASManager:
 		configs_root: Optional[Path] = None,
 		enabled_sides: Sequence[str] = ("red", "blue"),
 		ltm_dir: Optional[Path] = None,
+		ltm_enabled: Optional[bool] = None,
 	) -> "HierarchicalMASManager":
 		loader = ConfigLoader(root_dir=configs_root)
 		bundle = loader.load_all()
@@ -365,6 +382,7 @@ class HierarchicalMASManager:
 			prompts_cfg=bundle.prompts,
 			enabled_sides=enabled_sides,
 			ltm_dir=ltm_dir,
+			ltm_enabled=ltm_enabled,
 		)
 
 	async def start(self) -> None:
@@ -437,6 +455,20 @@ def _as_float(value: Any, default: float) -> float:
 		return float(value)
 	except (TypeError, ValueError):
 		return float(default)
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+	if isinstance(value, bool):
+		return value
+	if value is None:
+		return bool(default)
+
+	text = str(value).strip().lower()
+	if text in ("1", "true", "yes", "y", "on"):
+		return True
+	if text in ("0", "false", "no", "n", "off"):
+		return False
+	return bool(default)
 
 
 def _resolve_api_key_for_side(side: str, default_api_key: Any) -> Tuple[str, str]:
@@ -625,6 +657,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 	parser.add_argument("--configs-root", type=str, default=str(_default_configs_root()), help="MAS root containing configs")
 	parser.add_argument("--sides", type=str, default="red,blue", help="Comma-separated sides to enable")
 	parser.add_argument("--ltm-dir", type=str, default="", help="Optional LTM storage directory")
+	parser.add_argument("--disable-ltm", action="store_true", help="Disable long-term memory persistence")
 	parser.add_argument("--status-interval-s", type=float, default=5.0, help="Print status interval in seconds")
 	parser.add_argument("--run-duration-s", type=float, default=0.0, help="Exit after N seconds, 0 means forever")
 	parser.add_argument("--log-level", type=str, default="INFO", help="Logging level")
@@ -645,11 +678,14 @@ async def _async_main(args: argparse.Namespace) -> int:
 
 	ltm_dir = Path(args.ltm_dir) if str(args.ltm_dir).strip() else None
 
+	ltm_enabled = False if bool(getattr(args, "disable_ltm", False)) else None
+
 	try:
 		manager = HierarchicalMASManager.from_config_root(
 			configs_root=Path(args.configs_root),
 			enabled_sides=enabled_sides,
 			ltm_dir=ltm_dir,
+			ltm_enabled=ltm_enabled,
 		)
 	except ConfigError as exc:
 		LOGGER.error("Config load failed: %s", exc)

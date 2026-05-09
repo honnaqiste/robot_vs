@@ -1,7 +1,7 @@
 <?xml version='1.0'?>
 <sdf version='1.6'>
-  <world name='arena_6x8'>
-    <!-- Lighting -->
+  <world name='arena_6x8_v2'>
+    <!-- 全局光照系统 -->
     <light name='sun' type='directional'>
       <cast_shadows>1</cast_shadows>
       <pose frame=''>0 0 10 0 -0 0</pose>
@@ -16,7 +16,7 @@
       <direction>-0.5 0.1 -0.9</direction>
     </light>
 
-    <!-- Ground -->
+    <!-- 地面平面 -->
     <model name='ground_plane'>
       <static>1</static>
       <link name='link'>
@@ -66,7 +66,7 @@
       </link>
     </model>
 
-    <!-- Physics / environment -->
+    <!-- 物理与环境参数 -->
     <gravity>0 0 -9.8</gravity>
     <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
     <atmosphere type='adiabatic'/>
@@ -80,9 +80,9 @@
       <background>0.7 0.7 0.7 1</background>
       <shadows>1</shadows>
     </scene>
-    <audio>
+    
       <device>default</device>
-    </audio>
+    
     <wind/>
     <spherical_coordinates>
       <surface_model>EARTH_WGS84</surface_model>
@@ -92,269 +92,271 @@
       <heading_deg>0</heading_deg>
     </spherical_coordinates>
 
-    <!-- Arena 6 x 8 with tactical obstacles -->
+    <!-- ============================================== -->
+    <!-- 6x8机器人对抗竞技场 - 优化版 v2.0 -->
+    <!-- 内部可玩区域：X轴(-3m ~ +3m)，Y轴(-4m ~ +4m) -->
+    <!-- 设计理念：开放式中心 + 对称掩护 + 多路线进攻 -->
+    <!-- ============================================== -->
     <model name='arena_6x8'>
       <pose frame=''>0 0 0 0 0 0</pose>
 
-      <!-- Boundary walls (inner playable area ~6 x 8) -->
-      <link name='Wall_N'>
-        <collision name='Wall_N_Collision'>
+      <!-- ============================================== -->
+      <!-- 边界墙体 - 定义竞技场范围 -->
+      <!-- 所有边界墙厚度0.15m，高度0.3m -->
+      <!-- ============================================== -->
+      
+      <!-- 北边界墙 (Y=+4.075m) -->
+      <link name='Boundary_Wall_North'>
+        <collision name='Boundary_Wall_North_Collision'>
           <geometry><box><size>6.0 0.15 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Wall_N_Visual'>
+        <visual name='Boundary_Wall_North_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
           <geometry><box><size>6.0 0.15 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/White</name>
             </script>
-            <ambient>1 1 1 1</ambient>
           </material>
         </visual>
         <pose frame=''>0 4.075 0 0 0 0</pose>
       </link>
-      <link name='Wall_S'>
-        <collision name='Wall_S_Collision'>
+
+      <!-- 南边界墙 (Y=-4.075m) -->
+      <link name='Boundary_Wall_South'>
+        <collision name='Boundary_Wall_South_Collision'>
           <geometry><box><size>6.0 0.15 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Wall_S_Visual'>
+        <visual name='Boundary_Wall_South_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
           <geometry><box><size>6.0 0.15 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/White</name>
             </script>
-            <ambient>1 1 1 1</ambient>
           </material>
         </visual>
         <pose frame=''>0 -4.075 0 0 0 0</pose>
       </link>
-      <link name='Wall_E'>
-        <collision name='Wall_E_Collision'>
+
+      <!-- 东边界墙 (X=+3.075m) -->
+      <link name='Boundary_Wall_East'>
+        <collision name='Boundary_Wall_East_Collision'>
           <geometry><box><size>0.15 8.0 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Wall_E_Visual'>
+        <visual name='Boundary_Wall_East_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
           <geometry><box><size>0.15 8.0 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/White</name>
             </script>
-            <ambient>1 1 1 1</ambient>
           </material>
         </visual>
         <pose frame=''>3.075 0 0 0 0 0</pose>
       </link>
-      <link name='Wall_W'>
-        <collision name='Wall_W_Collision'>
+
+      <!-- 西边界墙 (X=-3.075m) -->
+      <link name='Boundary_Wall_West'>
+        <collision name='Boundary_Wall_West_Collision'>
           <geometry><box><size>0.15 8.0 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Wall_W_Visual'>
+        <visual name='Boundary_Wall_West_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
           <geometry><box><size>0.15 8.0 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/White</name>
             </script>
-            <ambient>1 1 1 1</ambient>
           </material>
         </visual>
         <pose frame=''>-3.075 0 0 0 0 0</pose>
       </link>
 
-      <!-- Central zig-zag cover -->
-      <link name='Mid_Wall_1'>
-        <collision name='Mid_Wall_1_Collision'>
-          <geometry><box><size>2.2 0.2 0.3</size></box></geometry>
+      <!-- ============================================== -->
+      <!-- 中央战术区域 - 主要交火区 -->
+      <!-- 设计了3条主要进攻通道：左路、中路、右路 -->
+      <!-- 中央通道最宽(约2.4m)，适合快速推进 -->
+      <!-- 左右通道较窄(约1.2m)，适合侧翼包抄 -->
+      <!-- ============================================== -->
+      
+      <!-- 中央左掩护墙 - 保护左路进攻 -->
+      <link name='Central_Cover_Left'>
+        <collision name='Central_Cover_Left_Collision'>
+          <geometry><box><size>1.6 0.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Mid_Wall_1_Visual'>
+        <visual name='Central_Cover_Left_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>2.2 0.2 0.3</size></box></geometry>
+          <geometry><box><size>1.6 0.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Blue</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>-0.9 1.3 0 0 0 0</pose>
-      </link>
-      <link name='Mid_Wall_2'>
-        <collision name='Mid_Wall_2_Collision'>
-          <geometry><box><size>2.2 0.2 0.3</size></box></geometry>
-          <pose frame=''>0 0 0.15 0 0 0</pose>
-        </collision>
-        <visual name='Mid_Wall_2_Visual'>
-          <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>2.2 0.2 0.3</size></box></geometry>
-          <material>
-            <script>
-              <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
-            </script>
-          </material>
-        </visual>
-        <pose frame=''>0.9 -1.3 0 0 0 0</pose>
+        <pose frame=''>-1.2 0.8 0 0 0 0</pose>
       </link>
 
-      <!-- Vertical cover bars -->
-      <link name='Cover_V1'>
-        <collision name='Cover_V1_Collision'>
-          <geometry><box><size>0.2 1.6 0.3</size></box></geometry>
+      <!-- 中央右掩护墙 - 保护右路进攻 -->
+      <link name='Central_Cover_Right'>
+        <collision name='Central_Cover_Right_Collision'>
+          <geometry><box><size>1.6 0.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Cover_V1_Visual'>
+        <visual name='Central_Cover_Right_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.2 1.6 0.3</size></box></geometry>
+          <geometry><box><size>1.6 0.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Red</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>-0.9 0 0 0 0 0</pose>
-      </link>
-      <link name='Cover_V2'>
-        <collision name='Cover_V2_Collision'>
-          <geometry><box><size>0.2 1.6 0.3</size></box></geometry>
-          <pose frame=''>0 0 0.15 0 0 0</pose>
-        </collision>
-        <visual name='Cover_V2_Visual'>
-          <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.2 1.6 0.3</size></box></geometry>
-          <material>
-            <script>
-              <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
-            </script>
-          </material>
-        </visual>
-        <pose frame=''>0.9 0 0 0 0 0</pose>
+        <pose frame=''>1.2 -0.8 0 0 0 0</pose>
       </link>
 
-      <!-- Mid-side blocks for flank cover -->
-      <link name='Side_Block_N'>
-        <collision name='Side_Block_N_Collision'>
-          <geometry><box><size>0.6 0.6 0.3</size></box></geometry>
+      <!-- ============================================== -->
+      <!-- 侧翼掩护区域 - 用于迂回和防守 -->
+      <!-- 每个半场都有独立的掩护点，方便团队配合 -->
+      <!-- ============================================== -->
+      
+      <!-- 北半场左掩护点 -->
+      <!-- <link name='Flank_Cover_North_Left'>
+        <collision name='Flank_Cover_North_Left_Collision'>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Side_Block_N_Visual'>
+        <visual name='Flank_Cover_North_Left_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.6 0.6 0.3</size></box></geometry>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Green</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>0 2.6 0 0 0 0</pose>
-      </link>
-      <link name='Side_Block_S'>
-        <collision name='Side_Block_S_Collision'>
-          <geometry><box><size>0.6 0.6 0.3</size></box></geometry>
+        <pose frame=''>-2.0 2.0 0 0 0 0</pose>
+      </link> -->
+
+      <!-- 北半场右掩护点 -->
+      <link name='Flank_Cover_North_Right'>
+        <collision name='Flank_Cover_North_Right_Collision'>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Side_Block_S_Visual'>
+        <visual name='Flank_Cover_North_Right_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.6 0.6 0.3</size></box></geometry>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Green</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>0 -2.6 0 0 0 0</pose>
+        <pose frame=''>2.0 2.0 0 0 0 0</pose>
       </link>
 
-      <!-- Corner pillars -->
-      <link name='Pillar_NE'>
-        <collision name='Pillar_NE_Collision'>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
+      <!-- 南半场左掩护点 -->
+      <link name='Flank_Cover_South_Left'>
+        <collision name='Flank_Cover_South_Left_Collision'>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Pillar_NE_Visual'>
+        <visual name='Flank_Cover_South_Left_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Green</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>2.2 3.0 0 0 0 0</pose>
+        <pose frame=''>-2.0 -2.0 0 0 0 0</pose>
       </link>
-      <link name='Pillar_NW'>
-        <collision name='Pillar_NW_Collision'>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
+
+      <!-- 南半场右掩护点 -->
+      <!-- <link name='Flank_Cover_South_Right'>
+        <collision name='Flank_Cover_South_Right_Collision'>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Pillar_NW_Visual'>
+        <visual name='Flank_Cover_South_Right_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
+          <geometry><box><size>0.2 1.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Green</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>-2.2 3.0 0 0 0 0</pose>
+        <pose frame=''>2.0 -2.0 0 0 0 0</pose>
+      </link> -->
+
+      <!-- ============================================== -->
+      <!-- 出生点掩护 - 保护双方初始位置 -->
+      <!-- 防止开局被直接秒杀 -->
+      <!-- ============================================== -->
+      
+      <!-- 北出生点中央掩护 -->
+      <link name='Spawn_Cover_North'>
+        <collision name='Spawn_Cover_North_Collision'>
+          <geometry><box><size>1.0 0.2 0.3</size></box></geometry>
+          <pose frame=''>0 0 0.15 0 0 0</pose>
+        </collision>
+        <visual name='Spawn_Cover_North_Visual'>
+          <pose frame=''>0 0 0.15 0 0 0</pose>
+          <geometry><box><size>1.0 0.2 0.3</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Yellow</name>
+            </script>
+          </material>
+        </visual>
+        <pose frame=''>0 3.2 0 0 0 0</pose>
       </link>
-      <link name='Pillar_SE'>
-        <collision name='Pillar_SE_Collision'>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
+
+      <!-- 南出生点中央掩护 -->
+      <link name='Spawn_Cover_South'>
+        <collision name='Spawn_Cover_South_Collision'>
+          <geometry><box><size>1.0 0.2 0.3</size></box></geometry>
           <pose frame=''>0 0 0.15 0 0 0</pose>
         </collision>
-        <visual name='Pillar_SE_Visual'>
+        <visual name='Spawn_Cover_South_Visual'>
           <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
+          <geometry><box><size>1.0 0.2 0.3</size></box></geometry>
           <material>
             <script>
               <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
+              <name>Gazebo/Yellow</name>
             </script>
           </material>
         </visual>
-        <pose frame=''>2.2 -3.0 0 0 0 0</pose>
-      </link>
-      <link name='Pillar_SW'>
-        <collision name='Pillar_SW_Collision'>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
-          <pose frame=''>0 0 0.15 0 0 0</pose>
-        </collision>
-        <visual name='Pillar_SW_Visual'>
-          <pose frame=''>0 0 0.15 0 0 0</pose>
-          <geometry><box><size>0.4 0.4 0.3</size></box></geometry>
-          <material>
-            <script>
-              <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Grey</name>
-            </script>
-          </material>
-        </visual>
-        <pose frame=''>-2.2 -3.0 0 0 0 0</pose>
+        <pose frame=''>0 -3.2 0 0 0 0</pose>
       </link>
 
       <static>1</static>
     </model>
 
-    <!-- GUI camera -->
+    <!-- GUI相机初始位置 - 俯视整个竞技场 -->
     <gui fullscreen='0'>
       <camera name='user_camera'>
-        <pose frame=''>-8 0 4 0 0.2 0</pose>
+        <pose frame=''>-8 0 6 0 0.3 0</pose>
         <view_controller>orbit</view_controller>
         <projection_type>perspective</projection_type>
       </camera>

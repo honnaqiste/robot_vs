@@ -36,3 +36,4 @@ runtime:
   team_ports:
     red: 8001
     blue: 8002
+  enable_ltm: false
