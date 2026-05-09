@@ -1,8 +1,8 @@
 <launch>
   <!-- 1. 核心参数 -->
   <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="burger, waffle, waffle_pi"/>
-  <arg name="map_file" default="$(find robot_vs)/maps/map_simulation.yaml" doc="全局地图路径"/>
-  <arg name="world_file" default="$(find robot_vs)/worlds/world0.world" doc="仿真世界"/>
+  <arg name="map_file" default="$(find robot_vs)/maps/map_simulation2.yaml" doc="全局地图路径"/>
+  <arg name="world_file" default="$(find robot_vs)/worlds/world_6x8.world" doc="仿真世界"/>
 
   <!-- 2. 最先启动map_server -->
   <node name="map_server" pkg="map_server" type="map_server" output="screen"
