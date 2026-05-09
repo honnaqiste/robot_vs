@@ -52,11 +52,14 @@ car:
     LEADER_ORDER:
     {leader_order}
 
-    CURRENT_CAR_STATE_JSON:
-    {car_state}
+    MY_STATE:
+    {my_state}
 
-    TEAM_CONTEXT_JSON:
-    {team_context}
+    TEAMMATES:
+    {teammates}
+
+    ENEMIES_IN_SIGHT:
+    {enemies_in_sight}
 
     只为当前机器人输出一条动作，格式必须为：
     [

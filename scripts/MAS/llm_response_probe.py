@@ -172,48 +172,36 @@ def _default_car_prompt_inputs(side: str, robot_id: str) -> Dict[str, Any]:
 	normalized_side = str(side or "red").strip().lower() or "red"
 	normalized_robot = str(robot_id or "robot_{}_1".format(normalized_side)).strip() or "robot_{}_1".format(normalized_side)
 
-	car_state = {
-		"side": normalized_side,
-		"robot_id": normalized_robot,
-		"local_state": {
-			"robot_id": normalized_robot,
-			"team_color": normalized_side,
-			"alive": True,
-			"hp": 88.0,
-			"ammo": 20.0,
-			"in_combat": True,
-			"yaw": 0.2,
-			"visible_enemies": [{"id": "enemy_1", "x": 1.0, "y": -0.5}],
-			"safe_point": {"x": 0.0, "y": 0.0},
-		},
+	my_state = {
+		"id": normalized_robot,
+		"hp": 88,
+		"ammo": 20,
+		"pos": {"x": 0.3, "y": -0.6, "yaw": 0.2},
+		"current_action": "GOTO",
+		"task_status": "RUNNING",
 	}
+
+	teammates = [
+		{"id": "robot_{}_2".format(normalized_side), "x": -0.8, "y": 0.4, "hp": 74},
+	]
+
+	enemies_in_sight = [
+		{"id": "enemy_1", "x": 1.0, "y": -0.5, "hp": 40},
+	]
 
 	team_context = {
 		"team_color": normalized_side,
 		"my_cars": [normalized_robot],
-		"friendly": {
-			normalized_robot: {
-				"stale": False,
-				"state": {
-					"alive": True,
-					"hp": 88.0,
-					"ammo": 20.0,
-					"in_combat": True,
-				},
-			}
-		},
-		"enemy": {
-			"stale": False,
-			"state": {
-				"visible_count": 1,
-				"enemies": [{"id": "enemy_1", "x": 1.0, "y": -0.5, "hp": 40}],
-			},
-		},
+		"teammates": teammates,
+		"enemies_in_sight": enemies_in_sight,
 	}
 
 	return {
 		"leader_order": "Keep pressure but do not over-extend.",
-		"car_state": car_state,
+		"my_state": my_state,
+		"teammates": teammates,
+		"enemies_in_sight": enemies_in_sight,
+		"car_state": my_state,
 		"team_context": team_context,
 	}
 

@@ -29,6 +29,11 @@ except ImportError:  # pragma: no cover
 	)
 
 try:
+	from prompt_dto import build_team_context_dto, compact_json
+except ImportError:  # pragma: no cover
+	from .prompt_dto import build_team_context_dto, compact_json  # type: ignore
+
+try:
 	from memory.ltm import LongTermMemory
 	from memory.stm import ShortTermMemory
 except ImportError:  # pragma: no cover
@@ -189,9 +194,11 @@ class LeaderAgent:
 				"LONG_TERM_MEMORY:\n{ltm_summary}\n"
 			)
 
+		compact_state = build_team_context_dto(global_state)
+
 		user_prompt = render_prompt(
 			template,
-			global_state=global_state,
+			global_state=compact_json(compact_state),
 			stm_summary=stm_summary,
 			ltm_summary=ltm_summary,
 		)

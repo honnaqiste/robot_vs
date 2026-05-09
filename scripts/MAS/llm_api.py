@@ -412,6 +412,7 @@ class AsyncLLMClient:
 					api_key=resolved_api_key,
 					base_url=self.base_url,
 					timeout=float(transport_timeout_s),
+					max_retries=0,
 					default_headers=default_headers,
 				)
 
@@ -519,8 +520,23 @@ class AsyncLLMClient:
 		trace_tag: str = "",
 	) -> str:
 		payload = self._build_payload(messages, profile, response_format=response_format, extra_body=extra_body)
-		raw = await self._request_json(payload, profile)
-		text = extract_text_from_response(raw)
+		try:
+			raw = await self._request_json(payload, profile)
+			text = extract_text_from_response(raw)
+		except Exception as exc:
+			if self.log_prompts:
+				error_text = "ERROR: {}: {}".format(type(exc).__name__, exc)
+				try:
+					trace_block = self._format_trace_block(
+						messages=messages,
+						response_text=error_text,
+						trace_tag=trace_tag,
+						model=profile.model,
+					)
+					await self._emit_trace_block(trace_block=trace_block, trace_tag=trace_tag, model=profile.model)
+				except Exception as trace_exc:
+					logger.warning("Failed to write LLM_TRACE error block: %s", trace_exc)
+			raise
 
 		if self.log_prompts:
 			trace_block = self._format_trace_block(

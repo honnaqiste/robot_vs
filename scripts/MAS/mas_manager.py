@@ -229,7 +229,7 @@ class SideMASRuntime:
 			car_agents = await self._ensure_car_agents(robot_ids)
 			leader_order, leader_ts = await self._get_leader_snapshot()
 			if (not leader_order.strip()) or (leader_ts <= 0):
-				leader_order = "Prioritize survival, maintain spacing, and attack only with advantage."
+				leader_order = "Currently no orders. Stay at your position and rotate around to scan the area."
 
 			local_state_by_robot = _build_local_state_by_robot(
 				side=self.side,
@@ -253,7 +253,7 @@ class SideMASRuntime:
 			return tasks
 
 	async def _ensure_car_agents(self, robot_ids: Sequence[str]) -> List[CarAgent]:
-		fast_timeout_s = max(0.35, min(2.0, self.car_interval_s * 0.85))
+		fast_timeout_s = max(0.35, self.car_interval_s)
 		async with self._agent_lock:
 			for robot_id in robot_ids:
 				if robot_id in self._car_agents:
