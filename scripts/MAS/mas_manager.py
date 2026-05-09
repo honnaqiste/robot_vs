@@ -60,6 +60,10 @@ class SideMASRuntime:
 			runtime_cfg = {}
 		self.leader_interval_s = max(0.5, _as_float(runtime_cfg.get("leader_loop_interval_s", 5.0), 5.0))
 		self.car_interval_s = max(0.2, _as_float(runtime_cfg.get("car_loop_interval_s", 1.0), 1.0))
+		initial_order = str(runtime_cfg.get("initial_leader_order", "")).strip()
+		if not initial_order:
+			initial_order = "Hold position, maintain spacing, rotate to scan."
+		self.initial_leader_order_text = initial_order
 
 		configured_ltm = _as_bool(runtime_cfg.get("enable_ltm", True), True)
 		env_disable_ltm = _as_bool(os.getenv("MAS_DISABLE_LTM"), False)
@@ -243,7 +247,7 @@ class SideMASRuntime:
 			car_agents = await self._ensure_car_agents(robot_ids)
 			leader_order, leader_ts = await self._get_leader_snapshot()
 			if (not leader_order.strip()) or (leader_ts <= 0):
-				leader_order = "Currently no orders. Stay at your position and rotate around to scan the area."
+				leader_order = self.initial_leader_order_text
 
 			local_state_by_robot = _build_local_state_by_robot(
 				side=self.side,

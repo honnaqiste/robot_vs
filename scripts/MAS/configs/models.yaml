@@ -31,6 +31,7 @@ car_model:
 runtime:
   leader_loop_interval_s: 30.0
   car_loop_interval_s: 5.0
+  initial_leader_order: "Hold position, maintain spacing, rotate to scan."
   split_prompt_logs: true
   prompt_log_per_run: true
   team_ports:
