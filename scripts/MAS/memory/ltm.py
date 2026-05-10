@@ -35,11 +35,17 @@ class LTMRecord:
 class LongTermMemory:
 	"""Persistent memory backed by JSONL for low-overhead append operations."""
 
-	def __init__(self, storage_path: Optional[Path] = None, max_in_memory: int = 2000) -> None:
+	def __init__(
+		self,
+		storage_path: Optional[Path] = None,
+		max_in_memory: int = 2000,
+		enabled: bool = True,
+	) -> None:
 		base_dir = Path(__file__).resolve().parent
 		default_path = base_dir / "data" / "ltm_records.jsonl"
 		self.storage_path = Path(storage_path) if storage_path is not None else default_path
 		self.max_in_memory = max(1, int(max_in_memory))
+		self.enabled = bool(enabled)
 
 		self._records: List[LTMRecord] = []
 		self._loaded = False
@@ -48,6 +54,9 @@ class LongTermMemory:
 	async def ensure_loaded(self) -> None:
 		async with self._lock:
 			if self._loaded:
+				return
+			if not self.enabled:
+				self._loaded = True
 				return
 
 			records = await asyncio.to_thread(_read_records_from_disk, self.storage_path)
@@ -69,7 +78,6 @@ class LongTermMemory:
 		if not str(summary).strip():
 			raise ValueError("summary must not be empty")
 
-		await self.ensure_loaded()
 		record = LTMRecord(
 			timestamp_s=float(timestamp_s) if timestamp_s is not None else time.time(),
 			record_type=str(record_type).strip(),
@@ -78,6 +86,11 @@ class LongTermMemory:
 			tags=_normalize_tags(tags),
 			score=float(score),
 		)
+
+		if not self.enabled:
+			return record
+
+		await self.ensure_loaded()
 
 		async with self._lock:
 			self._records.append(record)
@@ -94,6 +107,8 @@ class LongTermMemory:
 		record_type: str = "",
 		tags: Optional[Sequence[str]] = None,
 	) -> List[Dict[str, Any]]:
+		if not self.enabled:
+			return []
 		await self.ensure_loaded()
 
 		target_type = str(record_type or "").strip()
@@ -117,6 +132,8 @@ class LongTermMemory:
 		tags: Optional[Sequence[str]] = None,
 		record_type: str = "",
 	) -> str:
+		if not self.enabled:
+			return "Long-term memory disabled."
 		await self.ensure_loaded()
 		target_tags = set(_normalize_tags(tags))
 		target_type = str(record_type or "").strip()
@@ -144,6 +161,8 @@ class LongTermMemory:
 
 	async def save_lessons(self, lessons_text: str, tags: Optional[Sequence[str]] = None, score: float = 1.0) -> int:
 		"""Split plain-text lessons by line and store as separate LTM records."""
+		if not self.enabled:
+			return 0
 		text = str(lessons_text or "").strip()
 		if not text:
 			return 0
@@ -165,6 +184,8 @@ class LongTermMemory:
 		return added
 
 	async def clear(self, persist: bool = False) -> None:
+		if not self.enabled:
+			return
 		await self.ensure_loaded()
 		async with self._lock:
 			self._records = []

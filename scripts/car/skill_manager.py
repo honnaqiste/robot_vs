@@ -368,12 +368,13 @@ class SkillManager(object):
             rospy.logwarn("[%s] skill.stop failed: %s", self.ns, exc)
         self.active_skill = None
 
-    def set_task_feedback(self, task_id, current_action, task_status, mode):
+    def set_task_feedback(self, task_id, current_action, task_status, mode, reason=""):
         with self._lock:
             self._feedback["task_id"] = int(task_id)
             self._feedback["current_action"] = str(current_action)
             self._feedback["task_status"] = str(task_status)
             self._feedback["mode"] = int(mode)
+            self._feedback["reason"] = str(reason)
 
     def get_current_pose(self):
         with self._lock:
@@ -488,6 +489,7 @@ class SkillManager(object):
             msg.current_task_id = self._feedback["task_id"]
             msg.current_action = self._feedback["current_action"]
             msg.task_status = self._feedback["task_status"]
+            msg.reason = self._feedback["reason"]
             msg.mode = self._feedback["mode"]
 
         self._state_pub.publish(msg)

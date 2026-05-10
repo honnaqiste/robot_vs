@@ -32,6 +32,7 @@ class RefereeNode(object):
         self.default_ammo = float(rospy.get_param("~default_ammo", 50.0))
         self.fire_range = float(rospy.get_param("~fire_range", 5.0))
         self.hit_width = float(rospy.get_param("~hit_width", 0.5))
+        self.occlusion_width = float(rospy.get_param("~occlusion_width", self.hit_width))
         self.fire_damage = int(rospy.get_param("~fire_damage", 20))
         self.vision_range = float(rospy.get_param("~vision_range", 4.0))
 
@@ -231,6 +232,45 @@ class RefereeNode(object):
         # 2D 叉积模长=到射线垂距（方向向量已单位化）
         perp = abs(dx * dir_y - dy * dir_x)
         return perp < self.hit_width
+
+    def _segment_point_distance(self, x0, y0, x1, y1, px, py):
+        dx = float(x1) - float(x0)
+        dy = float(y1) - float(y0)
+        seg_len2 = dx * dx + dy * dy
+        if seg_len2 <= 1e-9:
+            return math.hypot(float(px) - float(x0), float(py) - float(y0)), 0.0
+
+        t = ((float(px) - float(x0)) * dx + (float(py) - float(y0)) * dy) / seg_len2
+        t = max(0.0, min(1.0, t))
+        cx = float(x0) + t * dx
+        cy = float(y0) + t * dy
+        return math.hypot(float(px) - cx, float(py) - cy), t
+
+    def _blocked_by_robot(self, shooter_ns, shooter_x, shooter_y, target_ns, target_x, target_y):
+        width = float(self.occlusion_width)
+        if width <= 0.0:
+            return False
+
+        for other_ns, state in self.global_states.items():
+            if other_ns in (shooter_ns, target_ns):
+                continue
+            if not state.get("alive", True):
+                continue
+
+            ox = float(state.get("x", 0.0))
+            oy = float(state.get("y", 0.0))
+            dist, t = self._segment_point_distance(shooter_x, shooter_y, target_x, target_y, ox, oy)
+            if dist <= width and t > 1e-3 and t < (1.0 - 1e-3):
+                return True
+
+        return False
+
+    def _has_clear_shot(self, shooter_ns, shooter_x, shooter_y, target_ns, target_x, target_y):
+        if not self._has_line_of_sight(shooter_x, shooter_y, target_x, target_y):
+            return False
+        if self._blocked_by_robot(shooter_ns, shooter_x, shooter_y, target_ns, target_x, target_y):
+            return False
+        return True
     def _world_to_map(self, x, y):
         """世界坐标 -> 栅格坐标 (mx,my)，失败返回 None"""
         if self._map_info is None:
@@ -343,6 +383,15 @@ class RefereeNode(object):
                     enemy.get("x", 0.0),
                     enemy.get("y", 0.0),
                 ):
+                    if not self._has_clear_shot(
+                        shooter_ns,
+                        shooter["x"],
+                        shooter["y"],
+                        enemy_ns,
+                        enemy.get("x", 0.0),
+                        enemy.get("y", 0.0),
+                    ):
+                        continue
                     old_hp = int(enemy.get("hp", self.default_hp))
                     new_hp = max(0, old_hp - self.fire_damage)
                     enemy["hp"] = new_hp
@@ -389,14 +438,14 @@ class RefereeNode(object):
 
                 dist = math.hypot(ex - fx, ey - fy)
                 if dist > self.vision_range:
-                 continue
+                    continue
 
                 bearing = math.atan2(ey - fy, ex - fx)
                 if abs(self._angle_diff(bearing, fyaw)) > half_fov:
-                 continue
+                    continue
 
                 if not self._has_line_of_sight(fx, fy, ex, ey):
-                 continue
+                    continue
                 seen = True
                 break
 
