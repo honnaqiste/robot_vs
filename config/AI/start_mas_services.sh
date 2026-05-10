@@ -52,7 +52,7 @@ export MAS_PROMPT_LOG_PER_RUN="${MAS_PROMPT_LOG_PER_RUN:-1}"
 export MAS_RUN_ID="${MAS_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 
 # Keep prompts_2 as current default, but allow override from environment.
-export MAS_PROMPTS_FILE="${MAS_PROMPTS_FILE:-prompts_2.yaml}"
+export MAS_PROMPTS_FILE="${MAS_PROMPTS_FILE:-prompts_3.2a.yaml}"
 # export MAS_PROMPTS_FILE="prompts_3.yaml"
 
 if [ "$MAS_LOG_PROMPTS" = "1" ]; then

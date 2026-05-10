@@ -18,4 +18,5 @@ float32 yaw
 uint32 current_task_id      # 我正在执行的、或者刚完成的任务ID
 string current_action       # 我当前在干嘛 (GOTO, STOP, ATTACK)
 string task_status          # 执行结果: "RUNNING", "SUCCESS", "FAILED"
+string reason               # Task intent text (from TaskCommand)
 uint8 mode                  # 我当前的物理模式 (0待机, 1巡逻, 2攻击)

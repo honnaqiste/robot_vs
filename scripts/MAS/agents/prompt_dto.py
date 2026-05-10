@@ -64,6 +64,8 @@ def build_teammates(team_context: Mapping[str, Any], self_id: str = "") -> List[
 		if not state_map:
 			continue
 
+		entry_map = entry if isinstance(entry, Mapping) else {}
+
 		robot_id = _read_text(rid, state_map.get("robot_ns"), state_map.get("id"))
 		if not robot_id:
 			continue
@@ -71,6 +73,25 @@ def build_teammates(team_context: Mapping[str, Any], self_id: str = "") -> List[
 		x = _read_position_component(state_map, {}, "x")
 		y = _read_position_component(state_map, {}, "y")
 		hp = _read_number(state_map, {}, "hp", 0.0)
+		current_action = _read_text(
+			state_map.get("current_action"),
+			state_map.get("action"),
+			entry_map.get("current_action"),
+			entry_map.get("action"),
+		)
+		task_status = _read_text(
+			state_map.get("task_status"),
+			_get_nested(state_map, ("task", "status")),
+			entry_map.get("task_status"),
+			_get_nested(entry_map, ("task", "status")),
+		)
+		reason = _read_text(
+			state_map.get("reason"),
+			_get_nested(state_map, ("task", "reason")),
+			entry_map.get("reason"),
+			_get_nested(entry_map, ("task", "reason")),
+		)
+		reason = _truncate_text(reason, 160)
 
 		out.append(
 			{
@@ -78,6 +99,9 @@ def build_teammates(team_context: Mapping[str, Any], self_id: str = "") -> List[
 				"x": _round_pos(x),
 				"y": _round_pos(y),
 				"hp": _round_int(hp, 0),
+				"current_action": current_action,
+				"task_status": task_status,
+				"reason": reason,
 			}
 		)
 
@@ -225,6 +249,15 @@ def _read_text(*values: Any) -> str:
 		if text:
 			return text
 	return ""
+
+
+def _truncate_text(text: str, max_chars: int = 160) -> str:
+	value = str(text or "")
+	if len(value) <= max_chars:
+		return value
+	if max_chars <= 3:
+		return value[:max_chars]
+	return value[: max_chars - 3] + "..."
 
 
 def _round_pos(value: Any, digits: int = 2) -> float:

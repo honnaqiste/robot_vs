@@ -134,6 +134,10 @@ class ShortTermMemory:
 		if hp_ammo_line:
 			lines.append(hp_ammo_line)
 
+		reason_line = _build_teammate_reason_line(friendly_latest, max_items=3)
+		if reason_line:
+			lines.append(reason_line)
+
 		enemy_last_seen_line = _build_enemy_last_seen_line(entries, max_items=3)
 		if enemy_last_seen_line:
 			lines.append(enemy_last_seen_line)
@@ -382,6 +386,33 @@ def _build_hp_ammo_line(
 	return "HP/ammo (latest, delta): {}.".format("; ".join(chunks))
 
 
+def _build_teammate_reason_line(
+	friendly_latest: Mapping[str, Any],
+	max_items: int = 3,
+	max_reason_chars: int = 60,
+) -> str:
+	if not friendly_latest:
+		return ""
+
+	chunks: List[str] = []
+	for robot_id in sorted(friendly_latest.keys()):
+		state = _extract_robot_state(friendly_latest.get(robot_id, {}))
+		reason = str(state.get("reason", "")).strip()
+		if not reason:
+			continue
+		reason = _truncate_text(reason, max_reason_chars)
+		chunks.append("{}:{}".format(robot_id, reason))
+
+	if not chunks:
+		return ""
+	if max_items > 0 and len(chunks) > max_items:
+		extra = len(chunks) - max_items
+		chunks = chunks[:max_items]
+		chunks.append("+{} more".format(extra))
+
+	return "Teammate intent: {}.".format("; ".join(chunks))
+
+
 def _extract_enemies_from_state(enemy_state: Mapping[str, Any]) -> List[Dict[str, Any]]:
 	state = enemy_state.get("state", {})
 	if not isinstance(state, Mapping):
@@ -470,6 +501,15 @@ def _build_enemy_last_seen_line(entries: Sequence[STMEntry], max_items: int = 3)
 	if not chunks:
 		return ""
 	return "Enemy last seen: {}.".format("; ".join(chunks))
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+	value = str(text or "")
+	if len(value) <= max_chars:
+		return value
+	if max_chars <= 3:
+		return value[:max_chars]
+	return value[: max_chars - 3] + "..."
 
 
 __all__ = [

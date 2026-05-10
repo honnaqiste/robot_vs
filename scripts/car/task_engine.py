@@ -79,6 +79,7 @@ class TaskEngine(object):
                 current_action=self._current_action,
                 task_status=self._task_status,
                 mode=int(msg.mode),
+                reason=str(msg.reason),
             )
 
     # ------------------------------------------------------------------
@@ -104,6 +105,7 @@ class TaskEngine(object):
                 current_action="NONE",
                 task_status="IDLE",
                 mode=0,
+                reason="",
             )
             return
 
@@ -121,6 +123,7 @@ class TaskEngine(object):
                 current_action=str(task.get("action_type", "NONE")).upper(),
                 task_status=FAILED,
                 mode=int(task.get("mode", 0)),
+                reason=str(task.get("reason", "timeout")),
             )
             return
 
@@ -138,6 +141,7 @@ class TaskEngine(object):
             current_action=self._current_action,
             task_status=self._task_status,
             mode=int(task.get("mode", 0)),
+            reason=str(task.get("reason", "")),
         )
 
     def _is_task_timeout(self, task, task_start_t):

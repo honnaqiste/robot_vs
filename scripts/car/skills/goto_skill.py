@@ -32,6 +32,7 @@ class GoToSkill(BaseSkill):
         self.unknown_as_obstacle = bool(rospy.get_param("~goto_unknown_as_obstacle", True))
         self.search_step_m = float(rospy.get_param("~goto_adjust_step_m", 0.20))
         self.max_search_radius_m = float(rospy.get_param("~goto_max_search_radius_m", 1.20))
+        self.clearance_m = float(rospy.get_param("~goto_clearance_m", 0.25))
 
     def start(self, params=None):
         params = params or {}
@@ -125,14 +126,70 @@ class GoToSkill(BaseSkill):
         checker = getattr(self.skill_manager, "is_world_point_navigable", None)
         if not callable(checker):
             return True
-        return bool(
-            checker(
-                x,
-                y,
-                occupied_threshold=self.occupied_threshold,
-                unknown_as_obstacle=self.unknown_as_obstacle,
+        clearance = float(self.clearance_m or 0.0)
+        if clearance <= 1e-6:
+            return bool(
+                checker(
+                    x,
+                    y,
+                    occupied_threshold=self.occupied_threshold,
+                    unknown_as_obstacle=self.unknown_as_obstacle,
+                )
             )
-        )
+
+        map_info = self.skill_manager.get_map_info() or {}
+        resolution = float(map_info.get('resolution', 0.0) or 0.0)
+        width = int(map_info.get('width', 0) or 0)
+        height = int(map_info.get('height', 0) or 0)
+        if resolution <= 0.0 or width <= 0 or height <= 0:
+            return bool(
+                checker(
+                    x,
+                    y,
+                    occupied_threshold=self.occupied_threshold,
+                    unknown_as_obstacle=self.unknown_as_obstacle,
+                )
+            )
+
+        to_index = getattr(self.skill_manager, "world_to_map_index", None)
+        get_cell = getattr(self.skill_manager, "get_map_cell_value", None)
+        if not callable(to_index) or not callable(get_cell):
+            return bool(
+                checker(
+                    x,
+                    y,
+                    occupied_threshold=self.occupied_threshold,
+                    unknown_as_obstacle=self.unknown_as_obstacle,
+                )
+            )
+
+        center = to_index(x, y)
+        if center is None:
+            return False
+
+        radius_cells = int(math.ceil(clearance / resolution))
+        clearance_sq = clearance * clearance + 1e-9
+
+        for dx in range(-radius_cells, radius_cells + 1):
+            for dy in range(-radius_cells, radius_cells + 1):
+                dist_sq = (dx * resolution) ** 2 + (dy * resolution) ** 2
+                if dist_sq > clearance_sq:
+                    continue
+                ix = center[0] + dx
+                iy = center[1] + dy
+                if ix < 0 or iy < 0 or ix >= width or iy >= height:
+                    return False
+                val = get_cell(ix, iy)
+                if val is None:
+                    continue
+                if val < 0:
+                    if self.unknown_as_obstacle:
+                        return False
+                    continue
+                if val >= int(self.occupied_threshold):
+                    return False
+
+        return True
 
     def _find_nearby_navigable(self, center_x, center_y, retry_count):
         map_info = self.skill_manager.get_map_info() or {}
@@ -160,6 +217,32 @@ class GoToSkill(BaseSkill):
                     return cand_x, cand_y
 
             radius += step
+
+        return None
+
+    def _find_along_to_robot(self, target_x, target_y, robot_x, robot_y, max_backtrack_m):
+        map_info = self.skill_manager.get_map_info() or {}
+        resolution = float(map_info.get('resolution', 0.05) or 0.05)
+        step = max(float(self.search_step_m), resolution)
+
+        dx = robot_x - target_x
+        dy = robot_y - target_y
+        dist = math.sqrt(dx**2 + dy**2)
+        if dist <= 1e-6:
+            return None
+
+        max_backtrack = min(float(max_backtrack_m), dist)
+        ux = dx / dist
+        uy = dy / dist
+
+        travel = 0.0
+        while travel <= (max_backtrack + 1e-6):
+            cand_x = target_x + ux * travel
+            cand_y = target_y + uy * travel
+            cand_x, cand_y = self._clamp_to_map(cand_x, cand_y)
+            if self._is_navigable(cand_x, cand_y):
+                return cand_x, cand_y
+            travel += step
 
         return None
 
@@ -192,6 +275,25 @@ class GoToSkill(BaseSkill):
 
         if self._is_navigable(target_x, target_y):
             return target_x, target_y
+
+        line_candidate = self._find_along_to_robot(
+            target_x,
+            target_y,
+            rx,
+            ry,
+            self.max_search_radius_m,
+        )
+        if line_candidate is not None:
+            adj_x, adj_y = line_candidate
+            rospy.logwarn(
+                "[%s] GoToSkill adjusted target toward robot: (%.2f, %.2f) -> (%.2f, %.2f)",
+                self.skill_manager.ns,
+                target_x,
+                target_y,
+                adj_x,
+                adj_y,
+            )
+            return adj_x, adj_y
 
         candidate = self._find_nearby_navigable(target_x, target_y, retry_count)
         if candidate is not None:

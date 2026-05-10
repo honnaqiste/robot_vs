@@ -438,14 +438,14 @@ class RefereeNode(object):
 
                 dist = math.hypot(ex - fx, ey - fy)
                 if dist > self.vision_range:
-                 continue
+                    continue
 
                 bearing = math.atan2(ey - fy, ex - fx)
                 if abs(self._angle_diff(bearing, fyaw)) > half_fov:
-                 continue
+                    continue
 
                 if not self._has_line_of_sight(fx, fy, ex, ey):
-                 continue
+                    continue
                 seen = True
                 break
 
