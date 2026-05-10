@@ -4,7 +4,7 @@ discover_hz: 1.0
 default_hp: 100
 default_ammo: 20
 fire_range: 4.0
-hit_width: 0.1
+hit_width: 0.2
 fire_damage: 10
 vision_range: 4.0
 
