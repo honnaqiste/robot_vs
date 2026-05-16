@@ -17,5 +17,5 @@
   <!-- Referee + managers + agents -->
   <include file="$(find robot_vs)/launch/manager/referee.launch" if="$(arg start_referee)"/>
   <include file="$(find robot_vs)/launch/manager/managers.launch" if="$(arg start_managers)"/>
-  <include file="$(find robot_vs)/launch/car/cars4.launch" if="$(arg start_cars)"/>
+  <!-- <include file="$(find robot_vs)/launch/car/cars4.launch" if="$(arg start_cars)"/> -->
 </launch>
