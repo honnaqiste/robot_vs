@@ -180,6 +180,20 @@ class ConfigLoader:
 			]
 		)
 
+		if not side_tag:
+			# Allow per-side prompts-only layouts when a base prompts file is absent.
+			for fallback_side in ("red", "blue"):
+				if self.prompts_file_name:
+					candidates.append(self.configs_dir / fallback_side / self.prompts_file_name)
+					candidates.append(self.legacy_config_dir / fallback_side / self.prompts_file_name)
+				candidates.extend(
+					[
+						self.configs_dir / fallback_side / "prompts.yaml",
+						self.legacy_config_dir / fallback_side / "prompts.yaml",
+						self.legacy_config_dir / fallback_side / "prompt.yaml",
+					]
+				)
+
 		ordered_unique: List[Path] = []
 		seen = set()
 		for item in candidates:
