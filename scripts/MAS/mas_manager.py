@@ -323,12 +323,18 @@ class HierarchicalMASManager:
 		self,
 		models_cfg: Mapping[str, Any],
 		prompts_cfg: Mapping[str, Any],
+		prompts_by_side: Optional[Mapping[str, Mapping[str, Any]]] = None,
 		enabled_sides: Sequence[str] = ("red", "blue"),
 		ltm_dir: Optional[Path] = None,
 		ltm_enabled: Optional[bool] = None,
 	) -> None:
 		self.models_cfg = dict(models_cfg)
 		self.prompts_cfg = dict(prompts_cfg)
+		self.prompts_by_side: Dict[str, Dict[str, Any]] = {}
+		if prompts_by_side:
+			for key, value in prompts_by_side.items():
+				if isinstance(value, Mapping):
+					self.prompts_by_side[str(key)] = dict(value)
 
 		self.enabled_sides = [s for s in (_normalize_side(x) for x in enabled_sides) if s]
 		if not self.enabled_sides:
@@ -339,6 +345,7 @@ class HierarchicalMASManager:
 		self._runtimes: Dict[str, SideMASRuntime] = {}
 		for side in self.enabled_sides:
 			side_models_cfg = _resolve_side_models_cfg(self.models_cfg, side)
+			side_prompts_cfg = _resolve_side_prompts(self.prompts_cfg, self.prompts_by_side, side)
 			side_llm_cfg = side_models_cfg.get("llm", {})
 			if not isinstance(side_llm_cfg, Mapping):
 				side_llm_cfg = {}
@@ -351,7 +358,7 @@ class HierarchicalMASManager:
 				side=side,
 				llm_client=llm_client,
 				models_cfg=side_models_cfg,
-				prompts_cfg=self.prompts_cfg,
+				prompts_cfg=side_prompts_cfg,
 				ltm_storage_path=side_path,
 				ltm_enabled=ltm_enabled,
 			)
@@ -381,9 +388,14 @@ class HierarchicalMASManager:
 	) -> "HierarchicalMASManager":
 		loader = ConfigLoader(root_dir=configs_root)
 		bundle = loader.load_all()
+		prompts_by_side = {
+			"red": loader.load_prompts_for_side("red"),
+			"blue": loader.load_prompts_for_side("blue"),
+		}
 		return cls(
 			models_cfg=bundle.models,
 			prompts_cfg=bundle.prompts,
+			prompts_by_side=prompts_by_side,
 			enabled_sides=enabled_sides,
 			ltm_dir=ltm_dir,
 			ltm_enabled=ltm_enabled,
@@ -514,6 +526,18 @@ def _resolve_side_models_cfg(models_cfg: Mapping[str, Any], side: str) -> Dict[s
 
 	resolved["llm"] = llm_cfg
 	return resolved
+
+
+def _resolve_side_prompts(
+	prompts_cfg: Mapping[str, Any],
+	prompts_by_side: Mapping[str, Mapping[str, Any]],
+	side: str,
+) -> Dict[str, Any]:
+	if prompts_by_side:
+		side_cfg = prompts_by_side.get(side)
+		if isinstance(side_cfg, Mapping):
+			return dict(side_cfg)
+	return dict(prompts_cfg)
 
 
 def _extract_battle_state(payload: Mapping[str, Any]) -> Dict[str, Any]:

@@ -135,6 +135,10 @@ async def _async_main(args: argparse.Namespace) -> int:
 	try:
 		loader = ConfigLoader(root_dir=args.configs_root)
 		bundle = loader.load_all()
+		prompts_by_side = {
+			"red": loader.load_prompts_for_side("red"),
+			"blue": loader.load_prompts_for_side("blue"),
+		}
 	except ConfigError as exc:
 		LOGGER.error("Load config failed: %s", exc)
 		return 2
@@ -151,6 +155,7 @@ async def _async_main(args: argparse.Namespace) -> int:
 	manager = HierarchicalMASManager(
 		models_cfg=bundle.models,
 		prompts_cfg=bundle.prompts,
+		prompts_by_side=prompts_by_side,
 		enabled_sides=("red", "blue"),
 	)
 	await manager.start()

@@ -144,8 +144,11 @@ class ConfigLoader:
 		self.prompts_path_raw = str(os.getenv("MAS_PROMPTS_PATH", "")).strip()
 		self._cache: Dict[Path, Tuple[int, Dict[str, Any]]] = {}
 
-	def _prompt_candidates(self) -> Tuple[Path, ...]:
+	def _prompt_candidates(self, side: str = "") -> Tuple[Path, ...]:
 		candidates: List[Path] = []
+		side_tag = str(side or "").strip().lower()
+		if side_tag not in ("red", "blue"):
+			side_tag = ""
 
 		if self.prompts_path_raw:
 			prompt_path = Path(self.prompts_path_raw).expanduser()
@@ -154,10 +157,21 @@ class ConfigLoader:
 			candidates.append(prompt_path)
 
 		if self.prompts_file_name:
+			if side_tag:
+				candidates.append(self.configs_dir / side_tag / self.prompts_file_name)
+				candidates.append(self.legacy_config_dir / side_tag / self.prompts_file_name)
 			candidates.append(self.configs_dir / self.prompts_file_name)
 			candidates.append(self.legacy_config_dir / self.prompts_file_name)
 
 		# Default search order with legacy fallback compatibility.
+		if side_tag:
+			candidates.extend(
+				[
+					self.configs_dir / side_tag / "prompts.yaml",
+					self.legacy_config_dir / side_tag / "prompts.yaml",
+					self.legacy_config_dir / side_tag / "prompt.yaml",
+				]
+			)
 		candidates.extend(
 			[
 				self.configs_dir / "prompts.yaml",
@@ -165,6 +179,20 @@ class ConfigLoader:
 				self.legacy_config_dir / "prompt.yaml",
 			]
 		)
+
+		if not side_tag:
+			# Allow per-side prompts-only layouts when a base prompts file is absent.
+			for fallback_side in ("red", "blue"):
+				if self.prompts_file_name:
+					candidates.append(self.configs_dir / fallback_side / self.prompts_file_name)
+					candidates.append(self.legacy_config_dir / fallback_side / self.prompts_file_name)
+				candidates.extend(
+					[
+						self.configs_dir / fallback_side / "prompts.yaml",
+						self.legacy_config_dir / fallback_side / "prompts.yaml",
+						self.legacy_config_dir / fallback_side / "prompt.yaml",
+					]
+				)
 
 		ordered_unique: List[Path] = []
 		seen = set()
@@ -256,6 +284,19 @@ class ConfigLoader:
 	def load_prompts(self) -> Dict[str, Any]:
 		candidate = self._first_existing(
 			self._prompt_candidates(),
+			label="prompts",
+		)
+		loaded = self._load_yaml_with_cache(candidate)
+		self._validate_prompts(loaded)
+		return loaded
+
+	def load_prompts_for_side(self, side: str) -> Dict[str, Any]:
+		normalized = str(side or "").strip().lower()
+		if normalized not in ("red", "blue"):
+			return self.load_prompts()
+
+		candidate = self._first_existing(
+			self._prompt_candidates(normalized),
 			label="prompts",
 		)
 		loaded = self._load_yaml_with_cache(candidate)
