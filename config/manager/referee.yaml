@@ -2,11 +2,11 @@ loop_hz: 10.0
 discover_hz: 1.0
 
 default_hp: 100
-default_ammo: 20
+default_ammo: 50
 fire_range: 4.0
 hit_width: 0.2
 fire_damage: 10
-vision_range: 4.0
+vision_range: 2.5
 
 fov_deg: 180.0
 map_topic: "/map"

@@ -5,20 +5,20 @@
   <arg name="type" default="normal" doc="type [normal, modbus, hmodbus, can, hcan]"/>
 
   <!-- Per-namespace default poses (override as needed) -->
-  <arg name="robot_red_x" default="-2.0"/>
-  <arg name="robot_red_y" default="2.0"/>
+  <arg name="robot_red_x" default="0.116"/>
+  <arg name="robot_red_y" default="1.64"/>
   <arg name="robot_red_a" default="-1.57"/>
 
-  <arg name="robot_red2_x" default="-1.0"/>
-  <arg name="robot_red2_y" default="2.0"/>
+  <arg name="robot_red2_x" default="0.312"/>
+  <arg name="robot_red2_y" default="2.32"/>
   <arg name="robot_red2_a" default="-1.57"/>
 
-  <arg name="robot_blue_x" default="2.0"/>
-  <arg name="robot_blue_y" default="-2.0"/>
+  <arg name="robot_blue_x" default="-0.323"/>
+  <arg name="robot_blue_y" default="-1.35"/>
   <arg name="robot_blue_a" default="1.57"/>
 
-  <arg name="robot_blue2_x" default="1.0"/>
-  <arg name="robot_blue2_y" default="-2.0"/>
+  <arg name="robot_blue2_x" default="-0.415"/>
+  <arg name="robot_blue2_y" default="-2.03"/>
   <arg name="robot_blue2_a" default="1.57"/>
 
   <arg name="initial_pose_x" default="$(eval {'robot_red': arg('robot_red_x'), 'robot_red2': arg('robot_red2_x'), 'robot_blue': arg('robot_blue_x'), 'robot_blue2': arg('robot_blue2_x')}.get(arg('robot_namespace'), '0.0'))"/>
