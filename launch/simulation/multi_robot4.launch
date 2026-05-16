@@ -1,24 +1,24 @@
 <launch>
   <!-- 1. 核心参数 -->
   <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="burger, waffle, waffle_pi"/>
-  <arg name="map_file" default="$(find robot_vs)/maps/map_simulation2.yaml" doc="全局地图路径"/>
-  <arg name="world_file" default="$(find robot_vs)/worlds/world_6x8.world" doc="仿真世界"/>
+  <arg name="map_file" default="$(find robot_vs)/maps/map_simulation3.yaml" doc="全局地图路径"/>
+  <arg name="world_file" default="$(find robot_vs)/worlds/world_6x8_empty.world" doc="仿真世界"/>
 
   <!-- 红蓝方初始位姿参数 -->
-  <arg name="robot_red_x" default="-2.0"/>
-  <arg name="robot_red_y" default="2.0"/>
+  <arg name="robot_red_x" default="-2.5"/>
+  <arg name="robot_red_y" default="3.0"/>
   <arg name="robot_red_a" default="-1.57"/>
 
-  <arg name="robot_red2_x" default="-1.0"/>
-  <arg name="robot_red2_y" default="2.0"/>
+  <arg name="robot_red2_x" default="-2.0"/>
+  <arg name="robot_red2_y" default="3.0"/>
   <arg name="robot_red2_a" default="-1.57"/>
 
-  <arg name="robot_blue_x" default="2.0"/>
-  <arg name="robot_blue_y" default="-2.0"/>
+  <arg name="robot_blue_x" default="2.5"/>
+  <arg name="robot_blue_y" default="-3.0"/>
   <arg name="robot_blue_a" default="1.57"/>
 
-  <arg name="robot_blue2_x" default="1.0"/>
-  <arg name="robot_blue2_y" default="-2.0"/>
+  <arg name="robot_blue2_x" default="2.0"/>
+  <arg name="robot_blue2_y" default="-3.0"/>
   <arg name="robot_blue2_a" default="1.57"/>
 
   <!-- 2. 最先启动map_server -->
