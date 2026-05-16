@@ -2,6 +2,7 @@
 
 <launch>
   <arg name="robot_namespace" default="robot_blue" doc="Robot namespace"/>
+  <arg name="type" default="normal" doc="type [normal, modbus, hmodbus, can, hcan]"/>
 
   <!-- Per-namespace default poses (override as needed) -->
   <arg name="robot_red_x" default="-2.0"/>
