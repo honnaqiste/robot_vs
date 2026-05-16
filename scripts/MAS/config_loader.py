@@ -142,6 +142,10 @@ class ConfigLoader:
 		self.legacy_config_dir = self.root_dir.parents[1] / "config" / "MAS"
 		self.prompts_file_name = str(os.getenv("MAS_PROMPTS_FILE", "")).strip()
 		self.prompts_path_raw = str(os.getenv("MAS_PROMPTS_PATH", "")).strip()
+		self.prompts_file_name_by_side = {
+			"red": str(os.getenv("MAS_PROMPTS_FILE_RED", "")).strip(),
+			"blue": str(os.getenv("MAS_PROMPTS_FILE_BLUE", "")).strip(),
+		}
 		self._cache: Dict[Path, Tuple[int, Dict[str, Any]]] = {}
 
 	def _prompt_candidates(self, side: str = "") -> Tuple[Path, ...]:
@@ -149,6 +153,14 @@ class ConfigLoader:
 		side_tag = str(side or "").strip().lower()
 		if side_tag not in ("red", "blue"):
 			side_tag = ""
+
+		side_specific_name = ""
+		if side_tag:
+			side_specific_name = self.prompts_file_name_by_side.get(side_tag, "")
+
+		if side_specific_name:
+			candidates.append(self.configs_dir / side_tag / side_specific_name)
+			candidates.append(self.legacy_config_dir / side_tag / side_specific_name)
 
 		if self.prompts_path_raw:
 			prompt_path = Path(self.prompts_path_raw).expanduser()
@@ -183,6 +195,10 @@ class ConfigLoader:
 		if not side_tag:
 			# Allow per-side prompts-only layouts when a base prompts file is absent.
 			for fallback_side in ("red", "blue"):
+				specific_name = self.prompts_file_name_by_side.get(fallback_side, "")
+				if specific_name:
+					candidates.append(self.configs_dir / fallback_side / specific_name)
+					candidates.append(self.legacy_config_dir / fallback_side / specific_name)
 				if self.prompts_file_name:
 					candidates.append(self.configs_dir / fallback_side / self.prompts_file_name)
 					candidates.append(self.legacy_config_dir / fallback_side / self.prompts_file_name)
