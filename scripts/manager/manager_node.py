@@ -5,6 +5,7 @@ import copy
 
 import rospy
 
+from interfaces import BaseObserver, BaseFormatter, BasePlanner, BaseDispatcher
 from battle_state_formatter import BattleStateFormatter
 from global_observer import GlobalObserver
 from llm_client import LLMClient
@@ -28,6 +29,12 @@ class TeamManager(object):
 				 llm_service_url="http://127.0.0.1:8001/plan",
 				 llm_timeout_s=8.0,
 				 observer=None, formatter=None, llm_client=None, dispatcher=None):
+		"""
+		:param observer: BaseObserver 实例，默认 GlobalObserver
+		:param formatter: BaseFormatter 实例，默认 BattleStateFormatter
+		:param llm_client: BasePlanner 实例，默认 LLMClient
+		:param dispatcher: BaseDispatcher 实例，默认 TaskDispatcher
+		"""
 		if my_cars is None:
 			my_cars = []
 		self.team_color = str(team_color)

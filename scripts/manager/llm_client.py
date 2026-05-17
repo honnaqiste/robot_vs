@@ -9,6 +9,8 @@ import rospy
 
 import requests
 
+from interfaces import BasePlanner
+
 
 try:
     text_type = unicode  # type: ignore[name-defined]
@@ -18,7 +20,7 @@ except NameError:
     binary_type = bytes
 
 
-class LLMClient(object):
+class LLMClient(BasePlanner):
     """基于规则的任务规划器（模拟 LLM) 。
 
     输出格式：

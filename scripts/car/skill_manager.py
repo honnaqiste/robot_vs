@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 # -*- coding: utf-8 -*-
 
 import math
@@ -18,8 +18,10 @@ from robot_vs.msg import RobotState
 
 from skills.base_skill import RUNNING, FAILED
 
+from interfaces import BaseSkillManager
 
-class SkillManager(object):
+
+class SkillManager(BaseSkillManager):
     """管理小车技能所需的 ROS 发布器与订阅器。
 
     职责：
