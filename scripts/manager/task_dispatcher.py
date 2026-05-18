@@ -4,6 +4,7 @@
 import rospy
 from robot_vs.msg import TaskCommand
 
+from interfaces import BaseDispatcher
 
 try:
 	text_type = unicode  # type: ignore[name-defined]
@@ -13,7 +14,7 @@ except NameError:
 	binary_type = bytes
 
 
-class TaskDispatcher(object):
+class TaskDispatcher(BaseDispatcher):
 	"""将团队任务发布到 /<ns>/task_cmd 话题。"""
 
 	def __init__(self, my_cars=None, default_timeout=2.0):

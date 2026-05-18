@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 # -*- coding: utf-8 -*-
 
 import threading
@@ -9,8 +9,10 @@ from robot_vs.msg import TaskCommand
 from skills.base_skill import RUNNING, SUCCESS, FAILED
 from skill_manager import SkillManager
 
+from interfaces import BaseTaskEngine
 
-class TaskEngine(object):
+
+class TaskEngine(BaseTaskEngine):
     """维护当前任务并驱动技能执行。
 
      职责：

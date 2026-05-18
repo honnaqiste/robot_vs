@@ -8,24 +8,39 @@ set -u
 
 MAS_PID=""
 
-# Configure conda shell hooks.
-__conda_setup="$('/home/xqrion/miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
-if [ $? -eq 0 ]; then
-    eval "$__conda_setup"
+# Auto-detect conda installation
+if command -v conda >/dev/null 2>&1; then
+    CONDA_BASE=$(conda info --base)
+elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
+    CONDA_BASE="/opt/conda"
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+    CONDA_BASE="$HOME/miniconda3"
+elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+    CONDA_BASE="$HOME/anaconda3"
 else
-    if [ -f "/home/xqrion/miniconda3/etc/profile.d/conda.sh" ]; then
-        . "/home/xqrion/miniconda3/etc/profile.d/conda.sh"
-    else
-        export PATH="/home/xqrion/miniconda3/bin:$PATH"
-    fi
+    echo "Conda not found. Please install conda or set CONDA_BASE manually."
+    exit 1
 fi
-unset __conda_setup
 
 CONDA_ENV="${MAS_CONDA_ENV:-robotvs}"
-conda activate "$CONDA_ENV" >/dev/null 2>&1 || {
-    echo "[start_mas_services] Failed to activate conda env: $CONDA_ENV"
+ENV_PATH="$CONDA_BASE/envs/$CONDA_ENV"
+
+# Verify environment exists
+if [ ! -d "$ENV_PATH" ]; then
+    echo "Conda environment '$CONDA_ENV' not found at $ENV_PATH"
     exit 1
-}
+fi
+
+# Set environment directly (no conda activate needed)
+export PATH="$ENV_PATH/bin:$PATH"
+export CONDA_PREFIX="$ENV_PATH"
+export CONDA_DEFAULT_ENV="$CONDA_ENV"
+
+# Optional: verify python is from the correct environment
+if ! command -v python >/dev/null 2>&1; then
+    echo "Python not found in $ENV_PATH/bin"
+    exit 1
+fi
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PYTHON_SCRIPT="$SCRIPT_DIR/../../scripts/MAS/llm_server.py"

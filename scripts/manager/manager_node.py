@@ -2,9 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import copy
+import json
+import os
 
 import rospy
+from robot_vs.msg import GameState
+from std_msgs.msg import String
 
+from interfaces import BaseObserver, BaseFormatter, BasePlanner, BaseDispatcher
 from battle_state_formatter import BattleStateFormatter
 from global_observer import GlobalObserver
 from llm_client import LLMClient
@@ -28,6 +33,12 @@ class TeamManager(object):
 				 llm_service_url="http://127.0.0.1:8001/plan",
 				 llm_timeout_s=8.0,
 				 observer=None, formatter=None, llm_client=None, dispatcher=None):
+		"""
+		:param observer: BaseObserver 实例，默认 GlobalObserver
+		:param formatter: BaseFormatter 实例，默认 BattleStateFormatter
+		:param llm_client: BasePlanner 实例，默认 LLMClient
+		:param dispatcher: BaseDispatcher 实例，默认 TaskDispatcher
+		"""
 		if my_cars is None:
 			my_cars = []
 		self.team_color = str(team_color)
@@ -55,6 +66,15 @@ class TeamManager(object):
 		self.dispatcher = dispatcher if dispatcher is not None else TaskDispatcher(
 			my_cars=self.my_cars,
 		)
+
+		# ====== 比赛状态同步 ======
+		self._game_status = "IDLE"
+		self._game_state_sub = rospy.Subscriber(
+			"/game/state", GameState, self._on_game_state, queue_size=10
+		)
+
+		# ====== 叙事事件（Manager 发到 /game/narrative，Referee 汇总写入文件）======
+		self._narrative_pub = rospy.Publisher("/game/narrative", String, queue_size=100)
 
 		rospy.loginfo(
 			"TeamManager initialized: team_color=%s my_cars=%s loop_hz=%.3f state_timeout_s=%.2f enemy_topic=%s patrol_points=%s llm_enabled=%s llm_service_url=%s llm_timeout_s=%.2f",
@@ -155,16 +175,79 @@ class TeamManager(object):
 			}
 		return fallback
 
+	def _on_game_state(self, msg):
+		self._game_status = str(msg.status)
+
+	def _send_stop_to_all(self, reason="match_ended"):
+		"""给所有小车发 STOP。"""
+		for ns in self.my_cars:
+			task = {
+				"action": "STOP",
+				"target": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+				"mode": 0,
+				"reason": reason,
+				"timeout": 2.0,
+			}
+			try:
+				pub = self.dispatcher._ensure_publisher(ns)
+				msg = self.dispatcher._build_task_msg(ns, task)
+				pub.publish(msg)
+			except Exception as exc:
+				rospy.logwarn("stop failed for %s: %s", ns, exc)
+		rospy.loginfo("[%s] STOP sent to %d robots (reason=%s)", self.team_color, len(self.my_cars), reason)
+
+	def _publish_narrative(self, message):
+		"""向 /game/narrative 发一条纯文本叙事。"""
+		try:
+			self._narrative_pub.publish(String(message))
+		except Exception:
+			pass
+
 	def run_cycle(self):
 		state = self.observer.get_battle_state()#状态字典
 		prompt_input = self.formatter.build(state, self.team_color, self.my_cars)
 		tasks = self.llm_client.plan_tasks(prompt_input)#任务字典
 		self.dispatcher.dispatch(tasks)
+
+		# 发布司令（Manager）的决策叙事
+		actions_summary = []
+		for ns, task in tasks.items():
+			action = task.get("action", "STOP")
+			reason = task.get("reason", "")
+			tgt = task.get("target", {})
+			tgt_str = "(%.2f,%.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
+			actions_summary.append("%s=%s%s" % (ns, action, tgt_str))
+		self._publish_narrative(
+			"[%s_manager] order: %s" % (self.team_color, ", ".join(actions_summary)),
+		)
+
+		# 发布每条任务的叙事（Referee 汇总写入文件）
+		for ns, task in tasks.items():
+			action = task.get("action", "STOP")
+			reason = task.get("reason", "")
+			tgt = task.get("target", {})
+			tgt_str = "(%.2f, %.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
+			self._publish_narrative(
+				"[%s] %s %s — %s" % (ns, action, tgt_str, reason),
+			)
+
 		return tasks
 
 	def run(self):
 		rate = rospy.Rate(self.loop_hz)
 		while not rospy.is_shutdown():
+			if self._game_status == "FINISHED":
+				# 比赛结束：持续发 STOP
+				self._send_stop_to_all("match_ended")
+				rate.sleep()
+				continue
+
+			if self._game_status == "IDLE":
+				# 比赛未开始：空转等待
+				rate.sleep()
+				continue
+
+			# _game_status == "PLAYING": 正常规划
 			try:
 				self.run_cycle()
 			except Exception as exc:
