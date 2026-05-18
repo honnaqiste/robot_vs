@@ -6,6 +6,7 @@ import math
 import os
 import threading
 import time
+from collections import OrderedDict
 
 import rospy
 from robot_vs.msg import BattleMacroState
@@ -53,8 +54,6 @@ class RefereeNode(object):
 
         # ====== 比赛管理参数 ======
         self.time_limit = float(rospy.get_param("~time_limit", 120.0))
-        self.save_detail = bool(rospy.get_param("~save_detail", False))
-        self.save_detail_interval = float(rospy.get_param("~save_detail_interval", 0.5))
         self.experiment = str(rospy.get_param("~experiment", ""))
         logs_dir_param = str(rospy.get_param("~logs_dir", ""))
         if logs_dir_param:
@@ -95,12 +94,13 @@ class RefereeNode(object):
         #             "death_time":None}
         self._match_stats = {}
 
-        # 关键事件（击杀），始终记录
-        self._key_events = []
-
-        # 详细时间线（仅 save_detail=True 时记录）
-        self._detail_frames = []
-        self._last_detail_t = 0.0
+        # 叙事时间线：实时追加写入文件
+        self._narrative = []
+        self._narrative_path = None
+        self._team_log_paths = {"red": None, "blue": None}
+        self._narrative_sub = rospy.Subscriber(
+            "/game/narrative", String, self._on_narrative_event, queue_size=200
+        )
 
         # ====== 停车发布器缓存 ======
         # dict[ns] -> Publisher 用于比赛结束时发 STOP
@@ -135,10 +135,13 @@ class RefereeNode(object):
         except Exception as exc:
             rospy.logwarn("[referee] cannot create logs dir %s: %s", self.logs_dir, exc)
 
+        # 初始化叙事文件路径（比赛开始时创建）
+        self._init_narrative_path()
+
         rospy.loginfo(
             "RefereeNode initialized: loop_hz=%.1f discover_hz=%.1f "
             "fire_range=%.2f hit_width=%.2f fire_damage=%d vision_range=%.2f "
-            "time_limit=%.1f save_detail=%s logs_dir=%s",
+            "time_limit=%.1f logs_dir=%s",
             self.loop_hz,
             self.discover_hz,
             self.fire_range,
@@ -146,9 +149,29 @@ class RefereeNode(object):
             self.fire_damage,
             self.vision_range,
             self.time_limit,
-            self.save_detail,
             self.logs_dir,
         )
+
+    def _init_narrative_path(self):
+        """设置叙事文件路径（比赛 ID 确定后调用）。"""
+        if self._match_id <= 0:
+            return
+        self._narrative_path = os.path.join(
+            self.logs_dir, "match_%03d_narrative.jsonl" % self._match_id
+        )
+        self._team_log_paths = {
+            "red": os.path.join(self.logs_dir, "match_%03d_red_log.jsonl" % self._match_id),
+            "blue": os.path.join(self.logs_dir, "match_%03d_blue_log.jsonl" % self._match_id),
+        }
+
+    def _clear_log_files(self):
+        """清空本场比赛的日志文件（若存在则删除重建）。"""
+        for path in [self._narrative_path] + list(self._team_log_paths.values()):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as exc:
+                    rospy.logwarn("[referee] failed to remove old log %s: %s", path, exc)
 
     @staticmethod
     def _normalize_ns(ns):
@@ -436,9 +459,7 @@ class RefereeNode(object):
         self._match_reason = ""
         self._match_ended = False
         self._match_stats = {}
-        self._key_events = []
-        self._detail_frames = []
-        self._last_detail_t = 0.0
+        self._narrative = []
         self._match_start_str = ""
         self._match_end_str = ""
 
@@ -468,10 +489,15 @@ class RefereeNode(object):
             self._match_reason = ""
             self._match_ended = False
             self._init_match_stats()
-            self._key_events = []
-            self._detail_frames = []
-            self._last_detail_t = 0.0
+            self._narrative = []
+            self._init_narrative_path()
+            self._clear_log_files()
 
+            self._append_narrative(
+                "referee",
+                "MATCH %d STARTED — red=%d alive, blue=%d alive, time_limit=%.1fs"
+                % (self._match_id, red_alive, blue_alive, self.time_limit),
+            )
             rospy.loginfo(
                 "[referee] ===== MATCH %d STARTED ===== red=%d alive, blue=%d alive, time_limit=%.1fs",
                 self._match_id,
@@ -603,6 +629,13 @@ class RefereeNode(object):
             elapsed,
         )
 
+        # 记录比赛结束叙事
+        self._append_narrative(
+            "referee",
+            "MATCH %d ENDED — winner=%s reason=%s duration=%.1fs"
+            % (self._match_id, self._match_winner, self._match_reason, elapsed),
+        )
+
         # 立即发布 FINISHED 状态，让 Manager 尽快收到
         self._publish_game_state()
 
@@ -705,52 +738,12 @@ class RefereeNode(object):
         return msg
 
     def _save_match_log(self, elapsed):
-        """保存 MatchRecord 到 JSON 文件。"""
-        # ---- MatchRecord（总是保存）----
-        red_stats = self._build_team_match_stat("red", elapsed)
-        blue_stats = self._build_team_match_stat("blue", elapsed)
-
-        record_json = {
-            "match_id": self._match_id,
-            "experiment": self.experiment if self.experiment else None,
-            "started_at": getattr(self, "_match_start_str", ""),
-            "ended_at": getattr(self, "_match_end_str", ""),
-            "winner": self._match_winner,
-            "reason": self._match_reason,
-            "duration_s": round(elapsed, 2),
-            "time_limit": self.time_limit,
-            "red_stats": self._team_stat_to_dict(red_stats),
-            "blue_stats": self._team_stat_to_dict(blue_stats),
-            "key_events": list(self._key_events),
-        }
-
-        # 追加到 matches.jsonl
-        jsonl_path = os.path.join(self.logs_dir, "matches.jsonl")
-        try:
-            if not os.path.exists(self.logs_dir):
-                os.makedirs(self.logs_dir)
-            with open(jsonl_path, "a") as f:
-                f.write(json.dumps(record_json, ensure_ascii=False) + "\n")
-            rospy.loginfo("[referee] match log saved: %s (line appended)", jsonl_path)
-        except Exception as exc:
-            rospy.logwarn("[referee] failed to save match log: %s", exc)
-
-        # ---- MatchDetail（可选）----
-        if self.save_detail and self._detail_frames:
-            detail_path = os.path.join(
-                self.logs_dir, "match_%03d_detail.jsonl" % self._match_id
+        """比赛结束日志（已由 narrative.jsonl 实时写入）。"""
+        if self._narrative_path:
+            rospy.loginfo(
+                "[referee] narrative file: %s (%d lines)",
+                self._narrative_path, len(self._narrative),
             )
-            try:
-                with open(detail_path, "w") as f:
-                    for frame in self._detail_frames:
-                        f.write(json.dumps(frame, ensure_ascii=False) + "\n")
-                rospy.loginfo(
-                    "[referee] match detail saved: %s (%d frames)",
-                    detail_path,
-                    len(self._detail_frames),
-                )
-            except Exception as exc:
-                rospy.logwarn("[referee] failed to save match detail: %s", exc)
 
     @staticmethod
     def _team_stat_to_dict(team_msg):
@@ -797,9 +790,13 @@ class RefereeNode(object):
                     self._match_reason = ""
                     self._match_ended = False
                     self._init_match_stats()
-                    self._key_events = []
-                    self._detail_frames = []
-                    self._last_detail_t = 0.0
+                    self._narrative = []
+                    self._init_narrative_path()
+                    self._clear_log_files()
+                    self._append_narrative(
+                        "referee",
+                        "MATCH %d FORCE STARTED via /game/command" % self._match_id,
+                    )
                     rospy.loginfo("[referee] ===== MATCH %d FORCE STARTED via /game/command =====", self._match_id)
                 else:
                     rospy.logwarn("[referee] cannot start: status=%s", self._match_status)
@@ -819,24 +816,78 @@ class RefereeNode(object):
             else:
                 rospy.logwarn("[referee] unknown game command: %s", cmd)
 
-    def _record_detail_frame(self):
-        """记录一帧详细时间线（仅 save_detail=True 时调用）。"""
-        now_t = time.time()
-        elapsed = now_t - self._match_start_wall
+    def _shorten_ns(self, ns):
+        """简化命名空间：robot_red -> red, robot_blue2 -> blue2"""
+        s = str(ns).strip()
+        for prefix in ("robot_", "robot"):
+            if s.startswith(prefix):
+                return s[len(prefix):]
+        return s
 
-        frame = {
-            "t": round(elapsed, 2),
-            "robots": {},
-        }
-        for ns, state in self.global_states.items():
-            frame["robots"][ns] = {
-                "hp": int(state.get("hp", 0)),
-                "ammo": float(state.get("ammo", 0)),
-                "alive": bool(state.get("alive", True) and int(state.get("hp", 0)) > 0),
-                "x": round(float(state.get("x", 0.0)), 2),
-                "y": round(float(state.get("y", 0.0)), 2),
-            }
-        self._detail_frames.append(frame)
+    def _append_narrative(self, source, message):
+        """追加一条叙事到文件，格式：{"t": 秒, "m": "消息"}
+        仅记录 combat 事件（START/END/hit/kill/miss），不含命令。
+        """
+        elapsed = time.time() - self._match_start_wall if self._match_start_wall > 0 else 0.0
+        # 统一转 unicode
+        try:
+            if isinstance(message, str):
+                message = message.decode("utf-8")
+            if isinstance(source, str):
+                source = source.decode("utf-8")
+        except NameError:
+            pass
+        # OrderedDict 确保 json 输出时 t 在前
+        obj = OrderedDict()
+        obj["t"] = round(elapsed, 2)
+        obj["m"] = "[%s] %s" % (source, message)
+        line = json.dumps(obj)
+        self._narrative.append(line)
+        if self._narrative_path:
+            try:
+                with open(self._narrative_path, "a") as f:
+                    f.write(line + "\n")
+            except Exception as exc:
+                rospy.logwarn("[referee] write narrative failed: %s", exc)
+
+    def _append_team_log(self, team, record):
+        """追加一条队伍日志到对应文件。
+        :param team: "red" 或 "blue"
+        :param record: dict，含 t 等字段
+        """
+        path = self._team_log_paths.get(team)
+        if not path:
+            return
+        elapsed = time.time() - self._match_start_wall if self._match_start_wall > 0 else 0.0
+        obj = OrderedDict()
+        obj["t"] = round(elapsed, 2)
+        obj.update(record)
+        line = json.dumps(obj)
+        try:
+            with open(path, "a") as f:
+                f.write(line + "\n")
+        except Exception as exc:
+            rospy.logwarn("[referee] write team log (%s) failed: %s", team, exc)
+
+    def _on_narrative_event(self, msg):
+        """接收 Manager 等节点发来的叙事（纯文本）。
+        命令写入对应队伍日志，不写入 narrative。
+        """
+        raw = msg.data
+        try:
+            if isinstance(raw, str):
+                raw = raw.decode("utf-8")
+        except Exception:
+            pass
+        # 判断消息属于哪队：看 ns 中是否包含 red/blue
+        raw_lower = raw.lower()
+        team = None
+        if "red" in raw_lower:
+            team = "red"
+        elif "blue" in raw_lower:
+            team = "blue"
+        if team:
+            self._append_team_log(team, {"event": "command", "msg": raw})
 
     def _publish_game_state(self):
         """发布当前比赛状态。"""
@@ -911,68 +962,118 @@ class RefereeNode(object):
                     continue
 
                 if self._ray_hit(
-                    shooter["x"],
-                    shooter["y"],
-                    shooter["yaw"],
-                    enemy.get("x", 0.0),
-                    enemy.get("y", 0.0),
-                ):
-                    if not self._has_clear_shot(
-                        shooter_ns,
                         shooter["x"],
                         shooter["y"],
-                        enemy_ns,
+                        shooter["yaw"],
                         enemy.get("x", 0.0),
                         enemy.get("y", 0.0),
                     ):
-                        rospy.loginfo(
-                            "[referee] ray hit %s but blocked (occlusion/LOS)", enemy_ns
-                        )
-                        continue
+                        if not self._has_clear_shot(
+                            shooter_ns,
+                            shooter["x"],
+                            shooter["y"],
+                            enemy_ns,
+                            enemy.get("x", 0.0),
+                            enemy.get("y", 0.0),
+                        ):
+                            rospy.loginfo(
+                                "[referee] ray hit %s but blocked (occlusion/LOS)", enemy_ns
+                            )
+                            continue
 
-                    hit_any = True
-                    old_hp = int(enemy.get("hp", self.default_hp))
-                    new_hp = max(0, old_hp - self.fire_damage)
-                    enemy["hp"] = new_hp
-                    enemy["alive"] = bool(new_hp > 0)
+                        hit_any = True
+                        old_hp = int(enemy.get("hp", self.default_hp))
+                        new_hp = max(0, old_hp - self.fire_damage)
+                        enemy["hp"] = new_hp
+                        enemy["alive"] = bool(new_hp > 0)
 
-                    # 统计：命中 + 伤害
-                    damage = old_hp - new_hp
-                    if shooter_stat is not None:
-                        shooter_stat["hits_landed"] = shooter_stat.get("hits_landed", 0) + 1
-                        shooter_stat["damage_dealt"] = shooter_stat.get("damage_dealt", 0.0) + float(damage)
-                    enemy_stat = self._match_stats.get(enemy_ns)
-                    if enemy_stat is not None:
-                        enemy_stat["hits_taken"] = enemy_stat.get("hits_taken", 0) + 1
-                        enemy_stat["damage_taken"] = enemy_stat.get("damage_taken", 0.0) + float(damage)
-
-                    rospy.loginfo(
-                        "[referee] HIT: shooter=%s target=%s hp:%d->%d",
-                        shooter_ns,
-                        enemy_ns,
-                        old_hp,
-                        new_hp,
-                    )
-
-                    if old_hp > 0 and new_hp == 0:
-                        # 统计：击杀 / 死亡
+                        # 统计：命中 + 伤害
+                        damage = old_hp - new_hp
                         if shooter_stat is not None:
-                            shooter_stat["kills"] = shooter_stat.get("kills", 0) + 1
+                            shooter_stat["hits_landed"] = shooter_stat.get("hits_landed", 0) + 1
+                            shooter_stat["damage_dealt"] = shooter_stat.get("damage_dealt", 0.0) + float(damage)
+                        enemy_stat = self._match_stats.get(enemy_ns)
                         if enemy_stat is not None:
-                            enemy_stat["deaths"] = enemy_stat.get("deaths", 0) + 1
-                            enemy_stat["death_time"] = time.time()
+                            enemy_stat["hits_taken"] = enemy_stat.get("hits_taken", 0) + 1
+                            enemy_stat["damage_taken"] = enemy_stat.get("damage_taken", 0.0) + float(damage)
 
-                        # 记录关键事件
-                        self._key_events.append({
-                            "t": round(time.time() - self._match_start_wall, 2),
-                            "type": "kill",
-                            "shooter": shooter_ns,
-                            "target": enemy_ns,
-                        })
+                        rospy.loginfo(
+                            "[referee] HIT: shooter=%s target=%s hp:%d->%d",
+                            shooter_ns,
+                            enemy_ns,
+                            old_hp,
+                            new_hp,
+                        )
 
-                        rospy.loginfo("[referee] KILL: shooter=%s target=%s", shooter_ns, enemy_ns)
+                        if old_hp > 0 and new_hp == 0:
+                            # 统计：击杀 / 死亡
+                            if shooter_stat is not None:
+                                shooter_stat["kills"] = shooter_stat.get("kills", 0) + 1
+                            if enemy_stat is not None:
+                                enemy_stat["deaths"] = enemy_stat.get("deaths", 0) + 1
+                                enemy_stat["death_time"] = time.time()
+
+                            # 记录击杀叙事（简化名+坐标+弹药量）
+                            s_name = self._shorten_ns(shooter_ns)
+                            e_name = self._shorten_ns(enemy_ns)
+                            sx = float(shooter.get("x", 0))
+                            sy = float(shooter.get("y", 0))
+                            ex = float(enemy.get("x", 0))
+                            ey = float(enemy.get("y", 0))
+                            self._append_narrative(
+                                "referee",
+                                "%s(%.1f,%.1f) KILLED %s(%.1f,%.1f) (hp:%d->0 ammo=%d)"
+                                % (s_name, sx, sy, e_name, ex, ey, old_hp, int(shooter["ammo"])),
+                            )
+                            # 队伍日志：攻击方击杀，受击方阵亡
+                            self._append_team_log(shooter_team, {
+                                "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
+                                "target": e_name, "hit": True, "killed": True,
+                            })
+                            self._append_team_log(enemy_team, {
+                                "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
+                                "attacker": s_name, "killed": True,
+                            })
+                            rospy.loginfo("[referee] KILL: shooter=%s target=%s", shooter_ns, enemy_ns)
+
+                        else:
+                            # 命中但不致死（简化名+坐标+弹药量）
+                            s_name = self._shorten_ns(shooter_ns)
+                            e_name = self._shorten_ns(enemy_ns)
+                            sx = float(shooter.get("x", 0))
+                            sy = float(shooter.get("y", 0))
+                            ex = float(enemy.get("x", 0))
+                            ey = float(enemy.get("y", 0))
+                            self._append_narrative(
+                                "referee",
+                                "%s(%.1f,%.1f) hits %s(%.1f,%.1f) (hp:%d->%d ammo=%d)"
+                                % (s_name, sx, sy, e_name, ex, ey, old_hp, new_hp, int(shooter["ammo"])),
+                            )
+                            # 队伍日志：攻击命中，受击
+                            self._append_team_log(shooter_team, {
+                                "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
+                                "target": e_name, "hit": True, "killed": False,
+                            })
+                            self._append_team_log(enemy_team, {
+                                "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
+                                "attacker": s_name, "killed": False,
+                            })
 
             if not hit_any:
+                # 开枪但全部 miss（简化名+坐标+弹药量）
+                s_name = self._shorten_ns(shooter_ns)
+                sx = float(shooter.get("x", 0))
+                sy = float(shooter.get("y", 0))
+                self._append_narrative(
+                    "referee",
+                    "%s(%.1f,%.1f) fires — missed all enemies (ammo=%d)"
+                    % (s_name, sx, sy, int(shooter["ammo"])),
+                )
+                # 队伍日志：攻击未命中
+                self._append_team_log(shooter_team, {
+                    "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
+                    "hit": False,
+                })
                 rospy.loginfo(
                     "[referee] fire from %s missed all enemies (ray_hit or LOS blocked)",
                     shooter_ns,
@@ -1108,12 +1209,6 @@ class RefereeNode(object):
                 # 比赛结束后持续发 STOP，压制 Manager 后续发来的任务
                 if self._match_status == "FINISHED":
                     self._stop_all_robots()
-
-                # 详细时间线记录
-                if self._match_status == "PLAYING" and self.save_detail:
-                    if now - self._last_detail_t >= self.save_detail_interval:
-                        self._record_detail_frame()
-                        self._last_detail_t = now
 
             self._publish_visible_enemies()
             self._publish_macro_state()

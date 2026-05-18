@@ -2,9 +2,12 @@
 # -*- coding: utf-8 -*-
 
 import copy
+import json
+import os
 
 import rospy
 from robot_vs.msg import GameState
+from std_msgs.msg import String
 
 from interfaces import BaseObserver, BaseFormatter, BasePlanner, BaseDispatcher
 from battle_state_formatter import BattleStateFormatter
@@ -69,6 +72,9 @@ class TeamManager(object):
 		self._game_state_sub = rospy.Subscriber(
 			"/game/state", GameState, self._on_game_state, queue_size=10
 		)
+
+		# ====== 叙事事件（Manager 发到 /game/narrative，Referee 汇总写入文件）======
+		self._narrative_pub = rospy.Publisher("/game/narrative", String, queue_size=100)
 
 		rospy.loginfo(
 			"TeamManager initialized: team_color=%s my_cars=%s loop_hz=%.3f state_timeout_s=%.2f enemy_topic=%s patrol_points=%s llm_enabled=%s llm_service_url=%s llm_timeout_s=%.2f",
@@ -190,18 +196,48 @@ class TeamManager(object):
 				rospy.logwarn("stop failed for %s: %s", ns, exc)
 		rospy.loginfo("[%s] STOP sent to %d robots (reason=%s)", self.team_color, len(self.my_cars), reason)
 
+	def _publish_narrative(self, message):
+		"""向 /game/narrative 发一条纯文本叙事。"""
+		try:
+			self._narrative_pub.publish(String(message))
+		except Exception:
+			pass
+
 	def run_cycle(self):
 		state = self.observer.get_battle_state()#状态字典
 		prompt_input = self.formatter.build(state, self.team_color, self.my_cars)
 		tasks = self.llm_client.plan_tasks(prompt_input)#任务字典
 		self.dispatcher.dispatch(tasks)
+
+		# 发布司令（Manager）的决策叙事
+		actions_summary = []
+		for ns, task in tasks.items():
+			action = task.get("action", "STOP")
+			reason = task.get("reason", "")
+			tgt = task.get("target", {})
+			tgt_str = "(%.2f,%.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
+			actions_summary.append("%s=%s%s" % (ns, action, tgt_str))
+		self._publish_narrative(
+			"[%s_manager] order: %s" % (self.team_color, ", ".join(actions_summary)),
+		)
+
+		# 发布每条任务的叙事（Referee 汇总写入文件）
+		for ns, task in tasks.items():
+			action = task.get("action", "STOP")
+			reason = task.get("reason", "")
+			tgt = task.get("target", {})
+			tgt_str = "(%.2f, %.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
+			self._publish_narrative(
+				"[%s] %s %s — %s" % (ns, action, tgt_str, reason),
+			)
+
 		return tasks
 
 	def run(self):
 		rate = rospy.Rate(self.loop_hz)
 		while not rospy.is_shutdown():
 			if self._game_status == "FINISHED":
-				# 比赛结束：持续发 STOP，不发新任务
+				# 比赛结束：持续发 STOP
 				self._send_stop_to_all("match_ended")
 				rate.sleep()
 				continue

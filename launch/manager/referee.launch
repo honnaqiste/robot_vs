@@ -8,8 +8,6 @@
         output="screen"
         required="true">
     <rosparam command="load" file="$(arg referee_param_file)" />
-    <param name="save_detail" value="true" />
-    <param name="save_detail_interval" value="0.5" />
     <param name="experiment" value="mas_vs_mas" />
     <param name="default_ammo" value="25" />
     <param name="time_limit" value="120" />
