@@ -6,8 +6,13 @@
         type="referee_node.py"
         name="referee"
         output="screen"
-        required="false">
+        required="true">
     <rosparam command="load" file="$(arg referee_param_file)" />
+    <param name="save_detail" value="true" />
+    <param name="save_detail_interval" value="0.5" />
+    <param name="experiment" value="mas_vs_mas" />
+    <param name="default_ammo" value="25" />
+    <param name="time_limit" value="120" />
   </node>
 
   <node pkg="robot_vs"
@@ -18,3 +23,4 @@
     <rosparam command="load" file="$(arg viz_param_file)" />
   </node>
 </launch>
+

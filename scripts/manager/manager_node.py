@@ -4,6 +4,7 @@
 import copy
 
 import rospy
+from robot_vs.msg import GameState
 
 from interfaces import BaseObserver, BaseFormatter, BasePlanner, BaseDispatcher
 from battle_state_formatter import BattleStateFormatter
@@ -61,6 +62,12 @@ class TeamManager(object):
 		)
 		self.dispatcher = dispatcher if dispatcher is not None else TaskDispatcher(
 			my_cars=self.my_cars,
+		)
+
+		# ====== 比赛状态同步 ======
+		self._game_status = "IDLE"
+		self._game_state_sub = rospy.Subscriber(
+			"/game/state", GameState, self._on_game_state, queue_size=10
 		)
 
 		rospy.loginfo(
@@ -162,6 +169,27 @@ class TeamManager(object):
 			}
 		return fallback
 
+	def _on_game_state(self, msg):
+		self._game_status = str(msg.status)
+
+	def _send_stop_to_all(self, reason="match_ended"):
+		"""给所有小车发 STOP。"""
+		for ns in self.my_cars:
+			task = {
+				"action": "STOP",
+				"target": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+				"mode": 0,
+				"reason": reason,
+				"timeout": 2.0,
+			}
+			try:
+				pub = self.dispatcher._ensure_publisher(ns)
+				msg = self.dispatcher._build_task_msg(ns, task)
+				pub.publish(msg)
+			except Exception as exc:
+				rospy.logwarn("stop failed for %s: %s", ns, exc)
+		rospy.loginfo("[%s] STOP sent to %d robots (reason=%s)", self.team_color, len(self.my_cars), reason)
+
 	def run_cycle(self):
 		state = self.observer.get_battle_state()#状态字典
 		prompt_input = self.formatter.build(state, self.team_color, self.my_cars)
@@ -172,6 +200,18 @@ class TeamManager(object):
 	def run(self):
 		rate = rospy.Rate(self.loop_hz)
 		while not rospy.is_shutdown():
+			if self._game_status == "FINISHED":
+				# 比赛结束：持续发 STOP，不发新任务
+				self._send_stop_to_all("match_ended")
+				rate.sleep()
+				continue
+
+			if self._game_status == "IDLE":
+				# 比赛未开始：空转等待
+				rate.sleep()
+				continue
+
+			# _game_status == "PLAYING": 正常规划
 			try:
 				self.run_cycle()
 			except Exception as exc:

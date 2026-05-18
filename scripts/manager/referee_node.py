@@ -1,17 +1,26 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 # -*- coding: utf-8 -*-
 
+import json
 import math
+import os
 import threading
+import time
 
 import rospy
 from robot_vs.msg import BattleMacroState
 from robot_vs.msg import EnemyInfo
 from robot_vs.msg import FireEvent
+from robot_vs.msg import GameState
+from robot_vs.msg import MatchRecord
+from robot_vs.msg import RobotMatchStat
 from robot_vs.msg import RobotState
+from robot_vs.msg import TaskCommand
 from robot_vs.msg import TeamMacroState
+from robot_vs.msg import TeamMatchStat
 from robot_vs.msg import VisibleEnemies
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
 
 
 class RefereeNode(object):
@@ -42,6 +51,21 @@ class RefereeNode(object):
         self.occ_threshold = int(rospy.get_param("~occ_threshold", 50))  # 0~100, >=阈值视为障碍
         self.block_unknown = bool(rospy.get_param("~block_unknown", True))  # -1 unknown 是否当障碍
 
+        # ====== 比赛管理参数 ======
+        self.time_limit = float(rospy.get_param("~time_limit", 120.0))
+        self.save_detail = bool(rospy.get_param("~save_detail", False))
+        self.save_detail_interval = float(rospy.get_param("~save_detail_interval", 0.5))
+        self.experiment = str(rospy.get_param("~experiment", ""))
+        logs_dir_param = str(rospy.get_param("~logs_dir", ""))
+        if logs_dir_param:
+            self.logs_dir = logs_dir_param
+        else:
+            self.logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../logs")
+        self.logs_dir = os.path.abspath(self.logs_dir)
+        # 如果指定了实验名，在 logs 下建子目录
+        if self.experiment:
+            self.logs_dir = os.path.join(self.logs_dir, self.experiment)
+
         self._map_info = None
         self._map_data = None
 
@@ -55,6 +79,34 @@ class RefereeNode(object):
         self._robot_state_subs = {}
         self._fire_event_subs = {}
 
+        # ====== 比赛生命周期 ======
+        self._match_status = "IDLE"       # IDLE / PLAYING / FINISHED
+        self._match_id = 0
+        self._match_start_wall = 0.0       # time.time() when match started
+        self._match_start_str = ""
+        self._match_end_str = ""
+        self._match_winner = ""
+        self._match_reason = ""
+        self._match_ended = False          # 防止重复结束
+
+        # 每辆小车的对局统计
+        # dict[ns] = {"kills":0, "deaths":0, "shots_fired":0, "hits_landed":0,
+        #             "hits_taken":0, "damage_dealt":0.0, "damage_taken":0.0,
+        #             "death_time":None}
+        self._match_stats = {}
+
+        # 关键事件（击杀），始终记录
+        self._key_events = []
+
+        # 详细时间线（仅 save_detail=True 时记录）
+        self._detail_frames = []
+        self._last_detail_t = 0.0
+
+        # ====== 停车发布器缓存 ======
+        # dict[ns] -> Publisher 用于比赛结束时发 STOP
+        self._stop_pubs = {}
+
+        # ====== 发布器 ======
         self.red_enemy_pub = rospy.Publisher(
             "/red_manager/enemy_state", VisibleEnemies, queue_size=10
         )
@@ -64,15 +116,38 @@ class RefereeNode(object):
         self.macro_state_pub = rospy.Publisher(
             "/referee/macro_state", BattleMacroState, queue_size=10
         )
+        self.game_state_pub = rospy.Publisher(
+            "/game/state", GameState, queue_size=10
+        )
+        self.game_result_pub = rospy.Publisher(
+            "/game/result", MatchRecord, queue_size=10
+        )
+
+        # ====== 比赛控制订阅 ======
+        self._game_cmd_sub = rospy.Subscriber(
+            "/game/command", String, self._on_game_command, queue_size=10
+        )
+
+        # 确保日志目录存在
+        try:
+            if not os.path.exists(self.logs_dir):
+                os.makedirs(self.logs_dir)
+        except Exception as exc:
+            rospy.logwarn("[referee] cannot create logs dir %s: %s", self.logs_dir, exc)
 
         rospy.loginfo(
-            "RefereeNode initialized: loop_hz=%.1f discover_hz=%.1f fire_range=%.2f hit_width=%.2f fire_damage=%d vision_range=%.2f",
+            "RefereeNode initialized: loop_hz=%.1f discover_hz=%.1f "
+            "fire_range=%.2f hit_width=%.2f fire_damage=%d vision_range=%.2f "
+            "time_limit=%.1f save_detail=%s logs_dir=%s",
             self.loop_hz,
             self.discover_hz,
             self.fire_range,
             self.hit_width,
             self.fire_damage,
             self.vision_range,
+            self.time_limit,
+            self.save_detail,
+            self.logs_dir,
         )
 
     @staticmethod
@@ -336,6 +411,448 @@ class RefereeNode(object):
                     return False
             return True
 
+    # ======================== 比赛生命周期管理 ========================
+
+    def _init_match_stats(self):
+        """为所有已发现的小车初始化对局统计。"""
+        for ns in self.global_states:
+            if ns not in self._match_stats:
+                self._match_stats[ns] = {
+                    "kills": 0,
+                    "deaths": 0,
+                    "shots_fired": 0,
+                    "hits_landed": 0,
+                    "hits_taken": 0,
+                    "damage_dealt": 0.0,
+                    "damage_taken": 0.0,
+                    "death_time": None,
+                }
+
+    def _reset_match_state(self):
+        """重置比赛状态，准备下一局。"""
+        self._match_status = "IDLE"
+        self._match_start_wall = 0.0
+        self._match_winner = ""
+        self._match_reason = ""
+        self._match_ended = False
+        self._match_stats = {}
+        self._key_events = []
+        self._detail_frames = []
+        self._last_detail_t = 0.0
+        self._match_start_str = ""
+        self._match_end_str = ""
+
+    def _try_auto_start_match(self):
+        """检测双方是否都有机器人存活，自动开始比赛。"""
+        if self._match_status != "IDLE":
+            return
+
+        red_alive = 0
+        blue_alive = 0
+        for ns, state in self.global_states.items():
+            alive = bool(state.get("alive", True) and int(state.get("hp", 0)) > 0)
+            if not alive:
+                continue
+            team = state.get("team", "")
+            if team == "red":
+                red_alive += 1
+            elif team == "blue":
+                blue_alive += 1
+
+        if red_alive > 0 and blue_alive > 0:
+            self._match_id += 1
+            self._match_status = "PLAYING"
+            self._match_start_wall = time.time()
+            self._match_start_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._match_winner = ""
+            self._match_reason = ""
+            self._match_ended = False
+            self._init_match_stats()
+            self._key_events = []
+            self._detail_frames = []
+            self._last_detail_t = 0.0
+
+            rospy.loginfo(
+                "[referee] ===== MATCH %d STARTED ===== red=%d alive, blue=%d alive, time_limit=%.1fs",
+                self._match_id,
+                red_alive,
+                blue_alive,
+                self.time_limit,
+            )
+
+    def _check_match_end(self):
+        """检查比赛是否应结束。"""
+        if self._match_status != "PLAYING":
+            return False
+        if self._match_ended:
+            return True
+
+        red_alive = 0
+        blue_alive = 0
+        red_total = 0
+        blue_total = 0
+        for ns, state in self.global_states.items():
+            team = state.get("team", "")
+            alive = bool(state.get("alive", True) and int(state.get("hp", 0)) > 0)
+            if team == "red":
+                red_total += 1
+                if alive:
+                    red_alive += 1
+            elif team == "blue":
+                blue_total += 1
+                if alive:
+                    blue_alive += 1
+
+        elapsed = time.time() - self._match_start_wall
+
+        # 诊断：每 5 秒打印一次存活状态
+        rospy.loginfo_throttle(
+            5.0,
+            "[referee] match alive check: red=%d/%d alive, blue=%d/%d alive, elapsed=%.1fs",
+            red_alive, red_total, blue_alive, blue_total, elapsed,
+        )
+
+        # 诊断：每 10 秒打印一次各车 HP/弹药
+        if red_total + blue_total > 0:
+            ammo_lines = []
+            for ns, state in sorted(self.global_states.items()):
+                team = state.get("team", "?")
+                hp = int(state.get("hp", 0))
+                ammo = float(state.get("ammo", 0))
+                alive = "A" if (state.get("alive", True) and hp > 0) else "D"
+                ammo_lines.append("%s[%s] HP=%d AM=%.0f" % (ns, alive, hp, ammo))
+            rospy.loginfo_throttle(
+                10.0,
+                "[referee] status: %s",
+                " | ".join(ammo_lines),
+            )
+
+        # 条件1：一方全灭
+        if red_alive == 0 and blue_alive > 0:
+            self._match_winner = "blue"
+            self._match_reason = "all_enemy_dead"
+            self._end_match()
+            return True
+        if blue_alive == 0 and red_alive > 0:
+            self._match_winner = "red"
+            self._match_reason = "all_enemy_dead"
+            self._end_match()
+            return True
+        if red_alive == 0 and blue_alive == 0 and red_total > 0 and blue_total > 0:
+            self._match_winner = "draw"
+            self._match_reason = "mutual_destruction"
+            self._end_match()
+            return True
+
+        # 条件2：超时
+        if self.time_limit > 0 and elapsed >= self.time_limit:
+            if red_alive > blue_alive:
+                self._match_winner = "red"
+            elif blue_alive > red_alive:
+                self._match_winner = "blue"
+            else:
+                self._match_winner = "draw"
+            self._match_reason = "timeout"
+            self._end_match()
+            return True
+
+        # 条件3：弹药耗尽僵局 — 所有存活小车弹药都为 0，继续打也没意义
+        if red_alive > 0 and blue_alive > 0:
+            all_out_of_ammo = True
+            for ns, state in self.global_states.items():
+                if not state.get("alive", True):
+                    continue
+                if int(state.get("hp", 0)) <= 0:
+                    continue
+                if float(state.get("ammo", 0)) > 0:
+                    all_out_of_ammo = False
+                    break
+            if all_out_of_ammo:
+                rospy.logwarn(
+                    "[referee] all alive robots out of ammo — ending match as draw"
+                )
+                self._match_winner = "draw"
+                self._match_reason = "ammo_starvation"
+                self._end_match()
+                return True
+
+        return False
+
+    def _end_match(self):
+        """结束比赛，生成记录并发布。"""
+        self._match_ended = True
+        self._match_status = "FINISHED"
+        self._match_end_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        elapsed = time.time() - self._match_start_wall
+
+        # 补充存活时间统计
+        for ns in self.global_states:
+            stat = self._match_stats.get(ns)
+            if stat is None:
+                continue
+            if stat["death_time"] is None:
+                stat["survival_time"] = elapsed
+            else:
+                stat["survival_time"] = stat["death_time"] - self._match_start_wall
+
+        rospy.loginfo(
+            "[referee] ===== MATCH %d ENDED ===== winner=%s reason=%s duration=%.1fs",
+            self._match_id,
+            self._match_winner,
+            self._match_reason,
+            elapsed,
+        )
+
+        # 立即发布 FINISHED 状态，让 Manager 尽快收到
+        self._publish_game_state()
+
+        # 让所有小车原地停止
+        self._stop_all_robots()
+
+        # 构建并发布 MatchRecord
+        record = self._build_match_record(elapsed)
+        self.game_result_pub.publish(record)
+
+        # 保存日志
+        self._save_match_log(elapsed)
+
+        # 10 秒后关掉整个仿真（让操作者看到最终状态）
+        rospy.loginfo("[referee] match done — shutting down in 10s (Ctrl+C to skip)")
+        rospy.Timer(rospy.Duration(10.0), lambda event: rospy.signal_shutdown("match_ended"), oneshot=True)
+
+    def _stop_all_robots(self):
+        """向所有小车发布 STOP 命令，覆盖 Manager 后续任务。"""
+        for ns in self.global_states:
+            if ns not in self._stop_pubs:
+                topic = "/%s/task_cmd" % ns
+                self._stop_pubs[ns] = rospy.Publisher(topic, TaskCommand, queue_size=10)
+
+            cmd = TaskCommand()
+            cmd.task_id = 0
+            cmd.action_type = "STOP"
+            cmd.timeout = 0.0
+            cmd.reason = "match_ended"
+            self._stop_pubs[ns].publish(cmd)
+
+        rospy.loginfo(
+            "[referee] STOP sent to %d robots", len(self.global_states)
+        )
+
+    def _build_match_record(self, elapsed):
+        """构建 MatchRecord 消息。"""
+        record = MatchRecord()
+        record.match_id = self._match_id
+        record.winner = str(self._match_winner)
+        record.reason = str(self._match_reason)
+        record.duration = float(elapsed)
+        record.time_limit = float(self.time_limit)
+        record.red_config = ""
+        record.blue_config = ""
+
+        record.red_stats = self._build_team_match_stat("red", elapsed)
+        record.blue_stats = self._build_team_match_stat("blue", elapsed)
+
+        return record
+
+    def _build_team_match_stat(self, team, elapsed):
+        """构建单方阵营的对局统计。"""
+        msg = TeamMatchStat()
+        msg.team = str(team)
+
+        total_kills = 0
+        total_deaths = 0
+        total_shots = 0
+        total_hits = 0
+        total_dmg_dealt = 0.0
+        total_dmg_taken = 0.0
+
+        for ns in sorted(self.global_states.keys()):
+            state = self.global_states.get(ns, {})
+            if state.get("team") != team:
+                continue
+
+            stat = self._match_stats.get(ns, {})
+            robot = RobotMatchStat()
+            robot.robot_ns = str(ns)
+            robot.final_hp = float(state.get("hp", 0))
+            robot.final_ammo = float(state.get("ammo", 0))
+            robot.was_alive = bool(state.get("alive", False) and int(state.get("hp", 0)) > 0)
+            robot.kills = int(stat.get("kills", 0))
+            robot.deaths = int(stat.get("deaths", 0))
+            robot.shots_fired = int(stat.get("shots_fired", 0))
+            robot.hits_landed = int(stat.get("hits_landed", 0))
+            robot.hits_taken = int(stat.get("hits_taken", 0))
+            robot.damage_dealt = float(stat.get("damage_dealt", 0.0))
+            robot.damage_taken = float(stat.get("damage_taken", 0.0))
+            robot.survival_time = float(stat.get("survival_time", elapsed))
+
+            msg.robots.append(robot)
+
+            total_kills += robot.kills
+            total_deaths += robot.deaths
+            total_shots += robot.shots_fired
+            total_hits += robot.hits_landed
+            total_dmg_dealt += robot.damage_dealt
+            total_dmg_taken += robot.damage_taken
+
+        msg.total_kills = total_kills
+        msg.total_deaths = total_deaths
+        msg.total_shots_fired = total_shots
+        msg.total_hits_landed = total_hits
+        msg.total_damage_dealt = total_dmg_dealt
+        msg.total_damage_taken = total_dmg_taken
+
+        return msg
+
+    def _save_match_log(self, elapsed):
+        """保存 MatchRecord 到 JSON 文件。"""
+        # ---- MatchRecord（总是保存）----
+        red_stats = self._build_team_match_stat("red", elapsed)
+        blue_stats = self._build_team_match_stat("blue", elapsed)
+
+        record_json = {
+            "match_id": self._match_id,
+            "experiment": self.experiment if self.experiment else None,
+            "started_at": getattr(self, "_match_start_str", ""),
+            "ended_at": getattr(self, "_match_end_str", ""),
+            "winner": self._match_winner,
+            "reason": self._match_reason,
+            "duration_s": round(elapsed, 2),
+            "time_limit": self.time_limit,
+            "red_stats": self._team_stat_to_dict(red_stats),
+            "blue_stats": self._team_stat_to_dict(blue_stats),
+            "key_events": list(self._key_events),
+        }
+
+        # 追加到 matches.jsonl
+        jsonl_path = os.path.join(self.logs_dir, "matches.jsonl")
+        try:
+            if not os.path.exists(self.logs_dir):
+                os.makedirs(self.logs_dir)
+            with open(jsonl_path, "a") as f:
+                f.write(json.dumps(record_json, ensure_ascii=False) + "\n")
+            rospy.loginfo("[referee] match log saved: %s (line appended)", jsonl_path)
+        except Exception as exc:
+            rospy.logwarn("[referee] failed to save match log: %s", exc)
+
+        # ---- MatchDetail（可选）----
+        if self.save_detail and self._detail_frames:
+            detail_path = os.path.join(
+                self.logs_dir, "match_%03d_detail.jsonl" % self._match_id
+            )
+            try:
+                with open(detail_path, "w") as f:
+                    for frame in self._detail_frames:
+                        f.write(json.dumps(frame, ensure_ascii=False) + "\n")
+                rospy.loginfo(
+                    "[referee] match detail saved: %s (%d frames)",
+                    detail_path,
+                    len(self._detail_frames),
+                )
+            except Exception as exc:
+                rospy.logwarn("[referee] failed to save match detail: %s", exc)
+
+    @staticmethod
+    def _team_stat_to_dict(team_msg):
+        """将 TeamMatchStat 消息转为 dict。"""
+        robots = []
+        for r in team_msg.robots:
+            robots.append({
+                "robot_ns": r.robot_ns,
+                "final_hp": r.final_hp,
+                "final_ammo": r.final_ammo,
+                "was_alive": r.was_alive,
+                "kills": r.kills,
+                "deaths": r.deaths,
+                "shots_fired": r.shots_fired,
+                "hits_landed": r.hits_landed,
+                "hits_taken": r.hits_taken,
+                "damage_dealt": r.damage_dealt,
+                "damage_taken": r.damage_taken,
+                "survival_time": r.survival_time,
+            })
+        return {
+            "team": team_msg.team,
+            "total_kills": team_msg.total_kills,
+            "total_deaths": team_msg.total_deaths,
+            "total_shots_fired": team_msg.total_shots_fired,
+            "total_hits_landed": team_msg.total_hits_landed,
+            "total_damage_dealt": team_msg.total_damage_dealt,
+            "total_damage_taken": team_msg.total_damage_taken,
+            "robots": robots,
+        }
+
+    def _on_game_command(self, msg):
+        """处理 /game/command 的外部控制。"""
+        cmd = str(msg.data).strip().lower()
+        with self._lock:
+            if cmd == "start":
+                if self._match_status == "IDLE":
+                    # 强制开始
+                    self._match_id += 1
+                    self._match_status = "PLAYING"
+                    self._match_start_wall = time.time()
+                    self._match_start_str = time.strftime("%Y-%m-%d %H:%M:%S")
+                    self._match_winner = ""
+                    self._match_reason = ""
+                    self._match_ended = False
+                    self._init_match_stats()
+                    self._key_events = []
+                    self._detail_frames = []
+                    self._last_detail_t = 0.0
+                    rospy.loginfo("[referee] ===== MATCH %d FORCE STARTED via /game/command =====", self._match_id)
+                else:
+                    rospy.logwarn("[referee] cannot start: status=%s", self._match_status)
+
+            elif cmd == "stop":
+                if self._match_status == "PLAYING" and not self._match_ended:
+                    self._match_winner = ""
+                    self._match_reason = "manual_stop"
+                    self._end_match()
+                else:
+                    rospy.logwarn("[referee] cannot stop: status=%s", self._match_status)
+
+            elif cmd == "reset":
+                self._reset_match_state()
+                rospy.loginfo("[referee] match state reset via /game/command")
+
+            else:
+                rospy.logwarn("[referee] unknown game command: %s", cmd)
+
+    def _record_detail_frame(self):
+        """记录一帧详细时间线（仅 save_detail=True 时调用）。"""
+        now_t = time.time()
+        elapsed = now_t - self._match_start_wall
+
+        frame = {
+            "t": round(elapsed, 2),
+            "robots": {},
+        }
+        for ns, state in self.global_states.items():
+            frame["robots"][ns] = {
+                "hp": int(state.get("hp", 0)),
+                "ammo": float(state.get("ammo", 0)),
+                "alive": bool(state.get("alive", True) and int(state.get("hp", 0)) > 0),
+                "x": round(float(state.get("x", 0.0)), 2),
+                "y": round(float(state.get("y", 0.0)), 2),
+            }
+        self._detail_frames.append(frame)
+
+    def _publish_game_state(self):
+        """发布当前比赛状态。"""
+        msg = GameState()
+        msg.status = str(self._match_status)
+        if self._match_start_wall > 0:
+            msg.elapsed = float(time.time() - self._match_start_wall)
+        else:
+            msg.elapsed = 0.0
+        msg.time_limit = float(self.time_limit)
+        msg.winner = str(self._match_winner)
+        msg.reason = str(self._match_reason)
+        self.game_state_pub.publish(msg)
+
+    # ======================== 开火事件处理（原有逻辑 + 统计）=======================
+
     def _on_fire_event(self, msg, topic_ns):
         shooter_ns = self._normalize_ns(msg.shooter_ns) or self._normalize_ns(topic_ns)
         if not shooter_ns:
@@ -348,17 +865,28 @@ class RefereeNode(object):
 
             shooter_team = shooter.get("team", "unknown")
             if shooter_team not in ("red", "blue"):
-                rospy.logwarn_throttle(2.0, "[referee] unknown shooter team: %s", shooter_ns)
+                rospy.logwarn("[referee] fire from unknown team: %s team=%s", shooter_ns, shooter_team)
                 return
 
+            # 打印每条 fire_event 的抵达记录（不节流）
+            shooter_hp = int(shooter.get("hp", 0))
+            shooter_ammo = float(shooter.get("ammo", 0))
+            shooter_alive = bool(shooter.get("alive", True) and shooter_hp > 0)
+            rospy.loginfo(
+                "[referee] FIRE_EVENT from=%s team=%s alive=%s hp=%d ammo=%.0f pos=(%.2f,%.2f)",
+                shooter_ns, shooter_team, shooter_alive,
+                shooter_hp, shooter_ammo,
+                float(msg.x), float(msg.y),
+            )
+
             # 开火先进行弹药结算：无弹药则拦截，命中判定不再继续。
-            if not shooter.get("alive", True):
-                rospy.logwarn_throttle(2.0, "[referee] dead shooter fire blocked: %s", shooter_ns)
+            if not shooter_alive:
+                rospy.logwarn("[referee] FIRE_BLOCKED (dead): %s", shooter_ns)
                 return
 
             old_ammo = float(shooter.get("ammo", self.default_ammo))
             if old_ammo <= 0.0:
-                rospy.logwarn_throttle(2.0, "[referee] fire blocked (no ammo): %s", shooter_ns)
+                rospy.logwarn("[referee] FIRE_BLOCKED (no ammo): %s", shooter_ns)
                 return
             shooter["ammo"] = max(0.0, old_ammo - 1.0)
 
@@ -367,7 +895,13 @@ class RefereeNode(object):
             shooter["y"] = float(msg.y)
             shooter["yaw"] = float(msg.yaw)
 
+            # 统计：记录开枪次数
+            shooter_stat = self._match_stats.get(shooter_ns)
+            if shooter_stat is not None:
+                shooter_stat["shots_fired"] = shooter_stat.get("shots_fired", 0) + 1
+
             enemy_team = "blue" if shooter_team == "red" else "red"
+            hit_any = False
             for enemy_ns, enemy in self.global_states.items():
                 if enemy_ns == shooter_ns:
                     continue
@@ -391,14 +925,29 @@ class RefereeNode(object):
                         enemy.get("x", 0.0),
                         enemy.get("y", 0.0),
                     ):
+                        rospy.loginfo(
+                            "[referee] ray hit %s but blocked (occlusion/LOS)", enemy_ns
+                        )
                         continue
+
+                    hit_any = True
                     old_hp = int(enemy.get("hp", self.default_hp))
                     new_hp = max(0, old_hp - self.fire_damage)
                     enemy["hp"] = new_hp
                     enemy["alive"] = bool(new_hp > 0)
 
+                    # 统计：命中 + 伤害
+                    damage = old_hp - new_hp
+                    if shooter_stat is not None:
+                        shooter_stat["hits_landed"] = shooter_stat.get("hits_landed", 0) + 1
+                        shooter_stat["damage_dealt"] = shooter_stat.get("damage_dealt", 0.0) + float(damage)
+                    enemy_stat = self._match_stats.get(enemy_ns)
+                    if enemy_stat is not None:
+                        enemy_stat["hits_taken"] = enemy_stat.get("hits_taken", 0) + 1
+                        enemy_stat["damage_taken"] = enemy_stat.get("damage_taken", 0.0) + float(damage)
+
                     rospy.loginfo(
-                        "[referee] hit: shooter=%s target=%s hp:%d->%d",
+                        "[referee] HIT: shooter=%s target=%s hp:%d->%d",
                         shooter_ns,
                         enemy_ns,
                         old_hp,
@@ -406,7 +955,28 @@ class RefereeNode(object):
                     )
 
                     if old_hp > 0 and new_hp == 0:
-                        rospy.loginfo("[referee] kill: shooter=%s target=%s", shooter_ns, enemy_ns)
+                        # 统计：击杀 / 死亡
+                        if shooter_stat is not None:
+                            shooter_stat["kills"] = shooter_stat.get("kills", 0) + 1
+                        if enemy_stat is not None:
+                            enemy_stat["deaths"] = enemy_stat.get("deaths", 0) + 1
+                            enemy_stat["death_time"] = time.time()
+
+                        # 记录关键事件
+                        self._key_events.append({
+                            "t": round(time.time() - self._match_start_wall, 2),
+                            "type": "kill",
+                            "shooter": shooter_ns,
+                            "target": enemy_ns,
+                        })
+
+                        rospy.loginfo("[referee] KILL: shooter=%s target=%s", shooter_ns, enemy_ns)
+
+            if not hit_any:
+                rospy.loginfo(
+                    "[referee] fire from %s missed all enemies (ray_hit or LOS blocked)",
+                    shooter_ns,
+                )
 
     def _angle_diff(self, a, b):
         return math.atan2(math.sin(a - b), math.cos(a - b))
@@ -521,6 +1091,8 @@ class RefereeNode(object):
         main_rate = rospy.Rate(self.loop_hz)
         discover_interval = 1.0 / self.discover_hz if self.discover_hz > 0.0 else 1.0
         last_discover = 0.0
+        game_state_interval = 1.0  # 1 Hz
+        last_game_state = 0.0
 
         while not rospy.is_shutdown():
             now = rospy.Time.now().to_sec()
@@ -528,8 +1100,29 @@ class RefereeNode(object):
                 self._discover_and_subscribe()
                 last_discover = now
 
+            with self._lock:
+                # 比赛生命周期管理
+                self._try_auto_start_match()
+                self._check_match_end()
+
+                # 比赛结束后持续发 STOP，压制 Manager 后续发来的任务
+                if self._match_status == "FINISHED":
+                    self._stop_all_robots()
+
+                # 详细时间线记录
+                if self._match_status == "PLAYING" and self.save_detail:
+                    if now - self._last_detail_t >= self.save_detail_interval:
+                        self._record_detail_frame()
+                        self._last_detail_t = now
+
             self._publish_visible_enemies()
             self._publish_macro_state()
+
+            if now - last_game_state >= game_state_interval:
+                with self._lock:
+                    self._publish_game_state()
+                last_game_state = now
+
             main_rate.sleep()
 
     def _on_map(self, msg):
