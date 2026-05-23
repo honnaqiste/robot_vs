@@ -5,6 +5,7 @@ import io
 import json
 import math
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -146,6 +147,8 @@ class RefereeNode(object):
 
         # 初始化叙事文件路径（比赛开始时创建）
         self._init_narrative_path()
+        # 根据现有 LTM 记录初始化 match_id（用于跨重启连续编号）
+        self._init_match_id_from_ltm()
 
         rospy.loginfo(
             "RefereeNode initialized: loop_hz=%.1f discover_hz=%.1f "
@@ -763,6 +766,32 @@ class RefereeNode(object):
         )
         return base_dir
 
+    def _init_match_id_from_ltm(self):
+        base_dir = self._mas_memory_dir()
+        if not os.path.isdir(base_dir):
+            return
+        try:
+            entries = os.listdir(base_dir)
+        except Exception:
+            return
+
+        max_id = 0
+        pattern = re.compile(r"^ltm_record_match_(\d{3})_(red|blue)\.jsonl$")
+        for name in entries:
+            match = pattern.match(name)
+            if not match:
+                continue
+            try:
+                num = int(match.group(1))
+            except Exception:
+                continue
+            if num > max_id:
+                max_id = num
+
+        if max_id > 0:
+            self._match_id = max_id
+            rospy.loginfo("[referee] match_id init from LTM: %03d", self._match_id)
+
     def _read_text_file(self, path):
         if not path or not os.path.exists(path):
             return u""
@@ -783,8 +812,51 @@ class RefereeNode(object):
         except Exception as exc:
             rospy.logwarn("[referee] write file failed: %s %s", path, exc)
 
-    def _build_ltm_prompt_text(self, match_id, team, narrative_text, team_log_text, prior_ltm_text, output_path):
-        header = u"MATCH_ID:\n{match_id}\n\nTEAM:\n{team}\n\nOUTPUT_LTM_RECORD_FILE:\n{output}\n"
+    def _extract_yaml_block(self, text, key):
+        if not text or not key:
+            return u""
+        lines = text.splitlines()
+        base_indent = None
+        start_idx = None
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("%s:" % key):
+                base_indent = len(line) - len(line.lstrip(" "))
+                start_idx = idx + 1
+                break
+        if base_indent is None or start_idx is None:
+            return u""
+
+        block_indent = base_indent + 2
+        out = []
+        for line in lines[start_idx:]:
+            if line.strip() and (len(line) - len(line.lstrip(" "))) <= base_indent:
+                break
+            if not line.strip():
+                out.append("")
+                continue
+            if (len(line) - len(line.lstrip(" "))) >= block_indent:
+                out.append(line[block_indent:])
+            else:
+                out.append("")
+        return u"\n".join(out).rstrip()
+
+    def _read_ltm_system_prompt(self):
+        template_path = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "MAS", "configs", "ltm_prompt_template.yaml")
+        )
+        text = self._read_text_file(template_path)
+        return self._extract_yaml_block(text, "system_prompt")
+
+    def _build_ltm_prompt_text(self, system_prompt, match_id, team, narrative_text, team_log_text, prior_ltm_text, output_path):
+        header = (
+            u"SYSTEM_PROMPT:\n{system}\n\n"
+            u"MATCH_ID:\n{match_id}\n\n"
+            u"TEAM:\n{team}\n\n"
+            u"OUTPUT_LTM_RECORD_FILE:\n{output}\n"
+        )
         body = u"\nNARRATIVE_LOG_JSONL:\n{narrative}\n\nTEAM_LOG_JSONL:\n{team_log}\n\nPRIOR_LONG_TERM_MEMORY_JSONL:\n{prior_ltm}\n"
         tail = (
             u"\n任务:\n"
@@ -792,7 +864,7 @@ class RefereeNode(object):
             u"2) 去重或修正已有记忆。\n"
             u"3) 只输出 JSONL，每行一个 JSON 对象。\n"
         )
-        return header.format(match_id=match_id, team=team, output=output_path) + body.format(
+        return header.format(system=system_prompt or u"", match_id=match_id, team=team, output=output_path) + body.format(
             narrative=narrative_text or u"",
             team_log=team_log_text or u"",
             prior_ltm=prior_ltm_text or u"",
@@ -811,6 +883,7 @@ class RefereeNode(object):
             return
 
         narrative_text = self._read_text_file(self._narrative_path)
+        system_prompt = self._read_ltm_system_prompt()
 
         for team in ("red", "blue"):
             team_log_path = self._team_log_paths.get(team)
@@ -826,9 +899,10 @@ class RefereeNode(object):
                 self._write_text_file(output_record_path, u"")
 
             prompt_path = os.path.join(
-                base_dir, "ltm_prompt_match_%03d_%s.txt" % (self._match_id, team)
+                base_dir, "ltm_prompt_match_%03d_%s.log" % (self._match_id, team)
             )
             prompt_text = self._build_ltm_prompt_text(
+                system_prompt=system_prompt,
                 match_id="%03d" % self._match_id,
                 team=team,
                 narrative_text=narrative_text,
