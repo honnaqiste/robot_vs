@@ -9,6 +9,7 @@ import rospy
 from robot_vs.msg import GameState
 from std_msgs.msg import String
 
+from interfaces import BaseObserver, BaseFormatter, BasePlanner, BaseDispatcher
 from battle_state_formatter import BattleStateFormatter
 from global_observer import GlobalObserver
 from llm_client import LLMClient

@@ -9,6 +9,8 @@ import rospy
 
 import requests
 
+from interfaces import BasePlanner
+
 
 try:
     text_type = unicode  # type: ignore[name-defined]
