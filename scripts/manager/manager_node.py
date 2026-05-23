@@ -31,14 +31,7 @@ class TeamManager(object):
 				 enemy_topic="/referee/enemy_state",
 				 llm_enabled=False,
 				 llm_service_url="http://127.0.0.1:8001/plan",
-				 llm_timeout_s=8.0,
-				 observer=None, formatter=None, llm_client=None, dispatcher=None):
-		"""
-		:param observer: BaseObserver 实例，默认 GlobalObserver
-		:param formatter: BaseFormatter 实例，默认 BattleStateFormatter
-		:param llm_client: BasePlanner 实例，默认 LLMClient
-		:param dispatcher: BaseDispatcher 实例，默认 TaskDispatcher
-		"""
+				 llm_timeout_s=8.0):
 		if my_cars is None:
 			my_cars = []
 		self.team_color = str(team_color)
@@ -51,19 +44,19 @@ class TeamManager(object):
 		self.llm_service_url = str(llm_service_url)
 		self.llm_timeout_s = float(llm_timeout_s)
 
-		self.observer = observer if observer is not None else GlobalObserver(
+		self.observer = GlobalObserver(
 			my_cars=self.my_cars,
 			state_timeout=self.state_timeout_s,
 			enemy_topic=self.enemy_topic,
 		)
-		self.formatter = formatter if formatter is not None else BattleStateFormatter()
-		self.llm_client = llm_client if llm_client is not None else LLMClient(
+		self.formatter = BattleStateFormatter()
+		self.llm_client = LLMClient(
 			patrol_points=(self.default_patrol_points or None),
 			use_llm=self.llm_enabled,
 			llm_service_url=self.llm_service_url,
 			llm_timeout_s=self.llm_timeout_s,
 		)
-		self.dispatcher = dispatcher if dispatcher is not None else TaskDispatcher(
+		self.dispatcher = TaskDispatcher(
 			my_cars=self.my_cars,
 		)
 
