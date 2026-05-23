@@ -24,6 +24,11 @@ from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
 
 
+try:
+    text_type = unicode  # type: ignore[name-defined]
+except NameError:
+    text_type = str
+
 class RefereeNode(object):
     """全局唯一裁判节点。
 
@@ -745,35 +750,6 @@ class RefereeNode(object):
                 self._narrative_path, len(self._narrative),
             )
 
-    @staticmethod
-    def _team_stat_to_dict(team_msg):
-        """将 TeamMatchStat 消息转为 dict。"""
-        robots = []
-        for r in team_msg.robots:
-            robots.append({
-                "robot_ns": r.robot_ns,
-                "final_hp": r.final_hp,
-                "final_ammo": r.final_ammo,
-                "was_alive": r.was_alive,
-                "kills": r.kills,
-                "deaths": r.deaths,
-                "shots_fired": r.shots_fired,
-                "hits_landed": r.hits_landed,
-                "hits_taken": r.hits_taken,
-                "damage_dealt": r.damage_dealt,
-                "damage_taken": r.damage_taken,
-                "survival_time": r.survival_time,
-            })
-        return {
-            "team": team_msg.team,
-            "total_kills": team_msg.total_kills,
-            "total_deaths": team_msg.total_deaths,
-            "total_shots_fired": team_msg.total_shots_fired,
-            "total_hits_landed": team_msg.total_hits_landed,
-            "total_damage_dealt": team_msg.total_damage_dealt,
-            "total_damage_taken": team_msg.total_damage_taken,
-            "robots": robots,
-        }
 
     def _on_game_command(self, msg):
         """处理 /game/command 的外部控制。"""
@@ -879,6 +855,29 @@ class RefereeNode(object):
                 raw = raw.decode("utf-8")
         except Exception:
             pass
+
+        parsed = None
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = None
+
+        if isinstance(parsed, dict):
+            team = parsed.get("team")
+            if isinstance(team, text_type):
+                team = team.strip().lower()
+            else:
+                team = str(team).strip().lower() if team is not None else ""
+            if team in ("red", "blue"):
+                record = dict(parsed)
+                record.pop("team", None)
+                if "event" not in record:
+                    record["event"] = "command"
+                if "msg" not in record:
+                    record["msg"] = raw
+                self._append_team_log(team, record)
+                return
+
         # 判断消息属于哪队：看 ns 中是否包含 red/blue
         raw_lower = raw.lower()
         team = None
@@ -952,7 +951,9 @@ class RefereeNode(object):
                 shooter_stat["shots_fired"] = shooter_stat.get("shots_fired", 0) + 1
 
             enemy_team = "blue" if shooter_team == "red" else "red"
-            hit_any = False
+            hit_enemy_ns = None
+            hit_enemy = None
+            hit_dist = None
             for enemy_ns, enemy in self.global_states.items():
                 if enemy_ns == shooter_ns:
                     continue
@@ -961,105 +962,35 @@ class RefereeNode(object):
                 if not enemy.get("alive", True):
                     continue
 
+                enemy_x = float(enemy.get("x", 0.0))
+                enemy_y = float(enemy.get("y", 0.0))
                 if self._ray_hit(
                         shooter["x"],
                         shooter["y"],
                         shooter["yaw"],
-                        enemy.get("x", 0.0),
-                        enemy.get("y", 0.0),
+                        enemy_x,
+                        enemy_y,
                     ):
                         if not self._has_clear_shot(
                             shooter_ns,
                             shooter["x"],
                             shooter["y"],
                             enemy_ns,
-                            enemy.get("x", 0.0),
-                            enemy.get("y", 0.0),
+                            enemy_x,
+                            enemy_y,
                         ):
                             rospy.loginfo(
                                 "[referee] ray hit %s but blocked (occlusion/LOS)", enemy_ns
                             )
                             continue
 
-                        hit_any = True
-                        old_hp = int(enemy.get("hp", self.default_hp))
-                        new_hp = max(0, old_hp - self.fire_damage)
-                        enemy["hp"] = new_hp
-                        enemy["alive"] = bool(new_hp > 0)
+                        dist = math.hypot(enemy_x - shooter["x"], enemy_y - shooter["y"])
+                        if hit_dist is None or dist < hit_dist:
+                            hit_dist = dist
+                            hit_enemy_ns = enemy_ns
+                            hit_enemy = enemy
 
-                        # 统计：命中 + 伤害
-                        damage = old_hp - new_hp
-                        if shooter_stat is not None:
-                            shooter_stat["hits_landed"] = shooter_stat.get("hits_landed", 0) + 1
-                            shooter_stat["damage_dealt"] = shooter_stat.get("damage_dealt", 0.0) + float(damage)
-                        enemy_stat = self._match_stats.get(enemy_ns)
-                        if enemy_stat is not None:
-                            enemy_stat["hits_taken"] = enemy_stat.get("hits_taken", 0) + 1
-                            enemy_stat["damage_taken"] = enemy_stat.get("damage_taken", 0.0) + float(damage)
-
-                        rospy.loginfo(
-                            "[referee] HIT: shooter=%s target=%s hp:%d->%d",
-                            shooter_ns,
-                            enemy_ns,
-                            old_hp,
-                            new_hp,
-                        )
-
-                        if old_hp > 0 and new_hp == 0:
-                            # 统计：击杀 / 死亡
-                            if shooter_stat is not None:
-                                shooter_stat["kills"] = shooter_stat.get("kills", 0) + 1
-                            if enemy_stat is not None:
-                                enemy_stat["deaths"] = enemy_stat.get("deaths", 0) + 1
-                                enemy_stat["death_time"] = time.time()
-
-                            # 记录击杀叙事（简化名+坐标+弹药量）
-                            s_name = self._shorten_ns(shooter_ns)
-                            e_name = self._shorten_ns(enemy_ns)
-                            sx = float(shooter.get("x", 0))
-                            sy = float(shooter.get("y", 0))
-                            ex = float(enemy.get("x", 0))
-                            ey = float(enemy.get("y", 0))
-                            self._append_narrative(
-                                "referee",
-                                "%s(%.1f,%.1f) KILLED %s(%.1f,%.1f) (hp:%d->0 ammo=%d)"
-                                % (s_name, sx, sy, e_name, ex, ey, old_hp, int(shooter["ammo"])),
-                            )
-                            # 队伍日志：攻击方击杀，受击方阵亡
-                            self._append_team_log(shooter_team, {
-                                "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
-                                "target": e_name, "hit": True, "killed": True,
-                            })
-                            self._append_team_log(enemy_team, {
-                                "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
-                                "attacker": s_name, "killed": True,
-                            })
-                            rospy.loginfo("[referee] KILL: shooter=%s target=%s", shooter_ns, enemy_ns)
-
-                        else:
-                            # 命中但不致死（简化名+坐标+弹药量）
-                            s_name = self._shorten_ns(shooter_ns)
-                            e_name = self._shorten_ns(enemy_ns)
-                            sx = float(shooter.get("x", 0))
-                            sy = float(shooter.get("y", 0))
-                            ex = float(enemy.get("x", 0))
-                            ey = float(enemy.get("y", 0))
-                            self._append_narrative(
-                                "referee",
-                                "%s(%.1f,%.1f) hits %s(%.1f,%.1f) (hp:%d->%d ammo=%d)"
-                                % (s_name, sx, sy, e_name, ex, ey, old_hp, new_hp, int(shooter["ammo"])),
-                            )
-                            # 队伍日志：攻击命中，受击
-                            self._append_team_log(shooter_team, {
-                                "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
-                                "target": e_name, "hit": True, "killed": False,
-                            })
-                            self._append_team_log(enemy_team, {
-                                "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
-                                "attacker": s_name, "killed": False,
-                            })
-
-            if not hit_any:
+            if hit_enemy is None:
                 # 开枪但全部 miss（简化名+坐标+弹药量）
                 s_name = self._shorten_ns(shooter_ns)
                 sx = float(shooter.get("x", 0))
@@ -1078,6 +1009,86 @@ class RefereeNode(object):
                     "[referee] fire from %s missed all enemies (ray_hit or LOS blocked)",
                     shooter_ns,
                 )
+                return
+
+            enemy_ns = hit_enemy_ns
+            enemy = hit_enemy
+            old_hp = int(enemy.get("hp", self.default_hp))
+            new_hp = max(0, old_hp - self.fire_damage)
+            enemy["hp"] = new_hp
+            enemy["alive"] = bool(new_hp > 0)
+
+            # 统计：命中 + 伤害
+            damage = old_hp - new_hp
+            if shooter_stat is not None:
+                shooter_stat["hits_landed"] = shooter_stat.get("hits_landed", 0) + 1
+                shooter_stat["damage_dealt"] = shooter_stat.get("damage_dealt", 0.0) + float(damage)
+            enemy_stat = self._match_stats.get(enemy_ns)
+            if enemy_stat is not None:
+                enemy_stat["hits_taken"] = enemy_stat.get("hits_taken", 0) + 1
+                enemy_stat["damage_taken"] = enemy_stat.get("damage_taken", 0.0) + float(damage)
+
+            rospy.loginfo(
+                "[referee] HIT: shooter=%s target=%s hp:%d->%d",
+                shooter_ns,
+                enemy_ns,
+                old_hp,
+                new_hp,
+            )
+
+            if old_hp > 0 and new_hp == 0:
+                # 统计：击杀 / 死亡
+                if shooter_stat is not None:
+                    shooter_stat["kills"] = shooter_stat.get("kills", 0) + 1
+                if enemy_stat is not None:
+                    enemy_stat["deaths"] = enemy_stat.get("deaths", 0) + 1
+                    enemy_stat["death_time"] = time.time()
+
+                # 记录击杀叙事（简化名+坐标+弹药量）
+                s_name = self._shorten_ns(shooter_ns)
+                e_name = self._shorten_ns(enemy_ns)
+                sx = float(shooter.get("x", 0))
+                sy = float(shooter.get("y", 0))
+                ex = float(enemy.get("x", 0))
+                ey = float(enemy.get("y", 0))
+                self._append_narrative(
+                    "referee",
+                    "%s(%.1f,%.1f) KILLED %s(%.1f,%.1f) (hp:%d->0 ammo=%d)"
+                    % (s_name, sx, sy, e_name, ex, ey, old_hp, int(shooter["ammo"])),
+                )
+                # 队伍日志：攻击方击杀，受击方阵亡
+                self._append_team_log(shooter_team, {
+                    "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
+                    "target": e_name, "hit": True, "killed": True,
+                })
+                self._append_team_log(enemy_team, {
+                    "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
+                    "attacker": s_name, "killed": True,
+                })
+                rospy.loginfo("[referee] KILL: shooter=%s target=%s", shooter_ns, enemy_ns)
+
+            else:
+                # 命中但不致死（简化名+坐标+弹药量）
+                s_name = self._shorten_ns(shooter_ns)
+                e_name = self._shorten_ns(enemy_ns)
+                sx = float(shooter.get("x", 0))
+                sy = float(shooter.get("y", 0))
+                ex = float(enemy.get("x", 0))
+                ey = float(enemy.get("y", 0))
+                self._append_narrative(
+                    "referee",
+                    "%s(%.1f,%.1f) hits %s(%.1f,%.1f) (hp:%d->%d ammo=%d)"
+                    % (s_name, sx, sy, e_name, ex, ey, old_hp, new_hp, int(shooter["ammo"])),
+                )
+                # 队伍日志：攻击命中，受击
+                self._append_team_log(shooter_team, {
+                    "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
+                    "target": e_name, "hit": True, "killed": False,
+                })
+                self._append_team_log(enemy_team, {
+                    "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
+                    "attacker": s_name, "killed": False,
+                })
 
     def _angle_diff(self, a, b):
         return math.atan2(math.sin(a - b), math.cos(a - b))

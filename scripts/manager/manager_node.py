@@ -16,6 +16,14 @@ from llm_client import LLMClient
 from task_dispatcher import TaskDispatcher
 
 
+try:
+	text_type = unicode  # type: ignore[name-defined]
+	binary_type = str
+except NameError:
+	text_type = str
+	binary_type = bytes
+
+
 class TeamManager(object):
 	"""ROS1 团队管理主节点。
 
@@ -192,9 +200,32 @@ class TeamManager(object):
 	def _publish_narrative(self, message):
 		"""向 /game/narrative 发一条纯文本叙事。"""
 		try:
-			self._narrative_pub.publish(String(message))
+			if isinstance(message, dict):
+				text = json.dumps(message, ensure_ascii=True)
+			else:
+				text = self._to_text(message, u"")
+			if text_type is not str:
+				payload = text.encode("utf-8")
+			else:
+				payload = text
+			self._narrative_pub.publish(String(payload))
 		except Exception:
 			pass
+
+	def _to_text(self, value, default=u""):
+		if value is None:
+			value = default
+		try:
+			if isinstance(value, text_type):
+				return value
+			if isinstance(value, binary_type):
+				return value.decode("utf-8", "replace")
+			return text_type(value)
+		except Exception:
+			try:
+				return text_type(default)
+			except Exception:
+				return u""
 
 	def run_cycle(self):
 		state = self.observer.get_battle_state()#状态字典
@@ -205,23 +236,33 @@ class TeamManager(object):
 		# 发布司令（Manager）的决策叙事
 		actions_summary = []
 		for ns, task in tasks.items():
-			action = task.get("action", "STOP")
-			reason = task.get("reason", "")
+			ns_text = self._to_text(ns, u"")
+			action = self._to_text(task.get("action", "STOP"), u"STOP").upper()
+			reason = self._to_text(task.get("reason", ""), u"")
 			tgt = task.get("target", {})
-			tgt_str = "(%.2f,%.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
-			actions_summary.append("%s=%s%s" % (ns, action, tgt_str))
+			tgt_str = u"(%.2f,%.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
+			actions_summary.append(u"%s=%s%s" % (ns_text, action, tgt_str))
 		self._publish_narrative(
-			"[%s_manager] order: %s" % (self.team_color, ", ".join(actions_summary)),
+			{
+				"team": self._to_text(self.team_color, u""),
+				"event": "command",
+				"msg": u"[%s_manager] order: %s" % (self._to_text(self.team_color, u""), u", ".join(actions_summary)),
+			},
 		)
 
 		# 发布每条任务的叙事（Referee 汇总写入文件）
 		for ns, task in tasks.items():
-			action = task.get("action", "STOP")
-			reason = task.get("reason", "")
+			ns_text = self._to_text(ns, u"")
+			action = self._to_text(task.get("action", "STOP"), u"STOP").upper()
+			reason = self._to_text(task.get("reason", ""), u"")
 			tgt = task.get("target", {})
-			tgt_str = "(%.2f, %.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
+			tgt_str = u"(%.2f, %.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
 			self._publish_narrative(
-				"[%s] %s %s — %s" % (ns, action, tgt_str, reason),
+				{
+					"team": self._to_text(self.team_color, u""),
+					"event": "command",
+					"msg": u"[%s] %s %s - %s" % (ns_text, action, tgt_str, reason),
+				},
 			)
 
 		return tasks

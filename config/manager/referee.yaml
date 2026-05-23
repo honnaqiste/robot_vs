@@ -12,3 +12,6 @@ fov_deg: 180.0
 map_topic: "/map"
 occ_threshold: 50
 block_unknown: true
+
+time_limit: 300.0
+experiment: "mas_vs_mas"
