@@ -1,6 +1,7 @@
 #!/usr/bin/env python2.7
 # -*- coding: utf-8 -*-
 
+import io
 import json
 import math
 import os
@@ -654,6 +655,9 @@ class RefereeNode(object):
         # 保存日志
         self._save_match_log(elapsed)
 
+        # 导出 LTM 拼接文件（每队一份）
+        self._export_ltm_prompt_files()
+
         # 10 秒后关掉整个仿真（让操作者看到最终状态）
         rospy.loginfo("[referee] match done — shutting down in 10s (Ctrl+C to skip)")
         rospy.Timer(rospy.Duration(10.0), lambda event: rospy.signal_shutdown("match_ended"), oneshot=True)
@@ -749,6 +753,87 @@ class RefereeNode(object):
                 "[referee] narrative file: %s (%d lines)",
                 self._narrative_path, len(self._narrative),
             )
+
+    def _mas_memory_dir(self):
+        base_dir = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "MAS", "memory", "data")
+        )
+        return base_dir
+
+    def _read_text_file(self, path):
+        if not path or not os.path.exists(path):
+            return u""
+        try:
+            with io.open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            try:
+                with open(path, "rb") as f:
+                    return f.read().decode("utf-8", "replace")
+            except Exception:
+                return u""
+
+    def _write_text_file(self, path, content):
+        try:
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as exc:
+            rospy.logwarn("[referee] write file failed: %s %s", path, exc)
+
+    def _build_ltm_prompt_text(self, match_id, team, narrative_text, team_log_text, prior_ltm_text, output_path):
+        header = u"MATCH_ID:\n{match_id}\n\nTEAM:\n{team}\n\nOUTPUT_LTM_RECORD_FILE:\n{output}\n"
+        body = u"\nNARRATIVE_LOG_JSONL:\n{narrative}\n\nTEAM_LOG_JSONL:\n{team_log}\n\nPRIOR_LONG_TERM_MEMORY_JSONL:\n{prior_ltm}\n"
+        tail = (
+            u"\n任务:\n"
+            u"1) 根据日志提炼新的长期记忆。\n"
+            u"2) 去重或修正已有记忆。\n"
+            u"3) 只输出 JSONL，每行一个 JSON 对象。\n"
+        )
+        return header.format(match_id=match_id, team=team, output=output_path) + body.format(
+            narrative=narrative_text or u"",
+            team_log=team_log_text or u"",
+            prior_ltm=prior_ltm_text or u"",
+        ) + tail
+
+    def _export_ltm_prompt_files(self):
+        if self._match_id <= 0:
+            return
+
+        base_dir = self._mas_memory_dir()
+        try:
+            if not os.path.exists(base_dir):
+                os.makedirs(base_dir)
+        except Exception as exc:
+            rospy.logwarn("[referee] cannot create MAS memory dir %s: %s", base_dir, exc)
+            return
+
+        narrative_text = self._read_text_file(self._narrative_path)
+
+        for team in ("red", "blue"):
+            team_log_path = self._team_log_paths.get(team)
+            team_log_text = self._read_text_file(team_log_path)
+
+            prior_ltm_path = os.path.join(base_dir, "ltm_%s.jsonl" % team)
+            prior_ltm_text = self._read_text_file(prior_ltm_path)
+
+            output_record_path = os.path.join(
+                base_dir, "ltm_record_match_%03d_%s.jsonl" % (self._match_id, team)
+            )
+            if not os.path.exists(output_record_path):
+                self._write_text_file(output_record_path, u"")
+
+            prompt_path = os.path.join(
+                base_dir, "ltm_prompt_match_%03d_%s.txt" % (self._match_id, team)
+            )
+            prompt_text = self._build_ltm_prompt_text(
+                match_id="%03d" % self._match_id,
+                team=team,
+                narrative_text=narrative_text,
+                team_log_text=team_log_text,
+                prior_ltm_text=prior_ltm_text,
+                output_path=output_record_path,
+            )
+            self._write_text_file(prompt_path, prompt_text)
 
 
     def _on_game_command(self, msg):

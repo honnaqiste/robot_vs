@@ -49,6 +49,8 @@ class LongTermMemory:
 
 		self._records: List[LTMRecord] = []
 		self._loaded = False
+		self._raw_cache = ""
+		self._raw_loaded = False
 		self._lock = asyncio.Lock()
 
 	async def ensure_loaded(self) -> None:
@@ -159,6 +161,22 @@ class LongTermMemory:
 			lines.append("[{}|{:.2f}] {} (tags={})".format(item.record_type, item.score, item.summary, tag_text))
 		return "\n".join(lines)
 
+	async def raw_text(self, max_lines: int = 200, max_chars: int = 8000) -> str:
+		"""Return raw JSONL content for leader prompt (read-only)."""
+		if self._raw_loaded:
+			return self._raw_cache
+
+		path = self.storage_path
+		if not path.exists() or not path.is_file():
+			return "No long-term memory available."
+
+		text = await asyncio.to_thread(_read_raw_text, path, max_lines)
+		if max_chars > 0 and len(text) > max_chars:
+			text = text[-max_chars:]
+		self._raw_cache = text
+		self._raw_loaded = True
+		return text
+
 	async def save_lessons(self, lessons_text: str, tags: Optional[Sequence[str]] = None, score: float = 1.0) -> int:
 		"""Split plain-text lessons by line and store as separate LTM records."""
 		if not self.enabled:
@@ -189,6 +207,8 @@ class LongTermMemory:
 		await self.ensure_loaded()
 		async with self._lock:
 			self._records = []
+			self._raw_cache = ""
+			self._raw_loaded = False
 		if persist:
 			await asyncio.to_thread(_rewrite_records_on_disk, self.storage_path, [])
 
@@ -268,6 +288,17 @@ def _rewrite_records_on_disk(path: Path, records: Sequence[LTMRecord]) -> None:
 		for item in records:
 			f.write(json.dumps(item.to_dict(), ensure_ascii=False))
 			f.write("\n")
+
+
+def _read_raw_text(path: Path, max_lines: int) -> str:
+	try:
+		with path.open("r", encoding="utf-8") as f:
+			lines = [line.rstrip("\n") for line in f if line.strip()]
+	except Exception:
+		return ""
+	if max_lines > 0:
+		lines = lines[-int(max_lines):]
+	return "\n".join(lines)
 
 
 __all__ = [

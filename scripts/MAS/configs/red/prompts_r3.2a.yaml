@@ -35,8 +35,8 @@ leader:
     SHORT_TERM_MEMORY:
     {stm_summary}
 
-    LONG_TERM_MEMORY:
-    {ltm_summary}
+    LONG_TERM_MEMORY_JSONL:
+    {ltm_records}
 
     请分配指令。注意：[任务-robot_id] 必须使用 MY_TEAM_IDS 中的真实 ID。
 
