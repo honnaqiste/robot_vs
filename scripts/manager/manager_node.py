@@ -233,7 +233,18 @@ class TeamManager(object):
 		tasks = self.llm_client.plan_tasks(prompt_input)#任务字典
 		self.dispatcher.dispatch(tasks)
 
-		# 发布司令（Manager）的决策叙事
+		team_text = self._to_text(self.team_color, u"")
+
+		# 1) 发布 Leader 战略理由（如果有）— 先于具体命令，提升可读性
+		leader_order = getattr(self.llm_client, "last_leader_order", "")
+		if leader_order:
+			self._publish_narrative({
+				"team": team_text,
+				"event": "leader_order",
+				"msg": u"[%s_leader] %s" % (team_text, self._to_text(leader_order, u"")),
+			})
+
+		# 2) 发布司令（Manager）的决策叙事
 		actions_summary = []
 		for ns, task in tasks.items():
 			ns_text = self._to_text(ns, u"")
@@ -244,13 +255,13 @@ class TeamManager(object):
 			actions_summary.append(u"%s=%s%s" % (ns_text, action, tgt_str))
 		self._publish_narrative(
 			{
-				"team": self._to_text(self.team_color, u""),
+				"team": team_text,
 				"event": "command",
-				"msg": u"[%s_manager] order: %s" % (self._to_text(self.team_color, u""), u", ".join(actions_summary)),
+				"msg": u"[%s_manager] order: %s" % (team_text, u", ".join(actions_summary)),
 			},
 		)
 
-		# 发布每条任务的叙事（Referee 汇总写入文件）
+		# 3) 发布每条任务的叙事（含 reason），Referee 汇总写入队伍日志
 		for ns, task in tasks.items():
 			ns_text = self._to_text(ns, u"")
 			action = self._to_text(task.get("action", "STOP"), u"STOP").upper()
@@ -259,9 +270,10 @@ class TeamManager(object):
 			tgt_str = u"(%.2f, %.2f)" % (float(tgt.get("x", 0)), float(tgt.get("y", 0)))
 			self._publish_narrative(
 				{
-					"team": self._to_text(self.team_color, u""),
+					"team": team_text,
 					"event": "command",
 					"msg": u"[%s] %s %s - %s" % (ns_text, action, tgt_str, reason),
+					"reason": reason,
 				},
 			)
 

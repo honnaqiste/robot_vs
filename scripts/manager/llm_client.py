@@ -53,6 +53,9 @@ class LLMClient:
         self._llm_timeout_s = float(llm_timeout_s)
         self._session = requests.Session()
 
+        # 最近一次 LLM 规划的 leader 策略理由
+        self.last_leader_order = ""
+
     def plan_tasks(self, battle_state):
         """根据战场状态按确定性规则规划任务。
 
@@ -86,9 +89,22 @@ class LLMClient:
                     timeout=self._llm_timeout_s,
                 )
                 response.raise_for_status()
-                parsed = response.json()
-                if isinstance(parsed, dict) and isinstance(parsed.get("tasks"), dict):
-                    parsed = parsed.get("tasks")
+                full_response = response.json()
+
+                # 保存 leader 策略理由（从 MAS 系统的 leader_order 字段提取）
+                if isinstance(full_response, dict):
+                    self.last_leader_order = self._to_text(
+                        full_response.get("leader_order", ""), ""
+                    )
+                    # 从完整响应中提取 tasks
+                    if isinstance(full_response.get("tasks"), dict):
+                        parsed = full_response.get("tasks")
+                    else:
+                        parsed = full_response
+                else:
+                    self.last_leader_order = ""
+                    parsed = full_response
+
                 return self._normalize_llm_tasks(parsed, robot_ids)
             except Exception as exc:
                 rospy.logwarn("LLMClient: LLM planning failed, use rule fallback: %r", exc)

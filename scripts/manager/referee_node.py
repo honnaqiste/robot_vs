@@ -104,6 +104,9 @@ class RefereeNode(object):
         self._narrative = []
         self._narrative_path = None
         self._team_log_paths = {"red": None, "blue": None}
+
+        # 每秒位置日志计时器
+        self._last_position_log_time = 0.0
         self._narrative_sub = rospy.Subscriber(
             "/game/narrative", String, self._on_narrative_event, queue_size=200
         )
@@ -914,7 +917,8 @@ class RefereeNode(object):
     def _append_team_log(self, team, record):
         """追加一条队伍日志到对应文件。
         :param team: "red" 或 "blue"
-        :param record: dict，含 t 等字段
+        :param record: dict，含 event 等字段
+        字段顺序保证: t → event → 其他字段（提升可读性）
         """
         path = self._team_log_paths.get(team)
         if not path:
@@ -922,17 +926,26 @@ class RefereeNode(object):
         elapsed = time.time() - self._match_start_wall if self._match_start_wall > 0 else 0.0
         obj = OrderedDict()
         obj["t"] = round(elapsed, 2)
-        obj.update(record)
-        line = json.dumps(obj)
+        # event 放在 t 后面，保证叙述顺序清晰
+        event_val = record.get("event", "")
+        if event_val:
+            obj["event"] = event_val
+        # 其余字段按字母序排列，保证一致性
+        for key in sorted(record.keys()):
+            if key == "event":
+                continue
+            obj[key] = record[key]
+        line = json.dumps(obj, ensure_ascii=False)
         try:
-            with open(path, "a") as f:
-                f.write(line + "\n")
+            with open(path, "ab") as f:
+                f.write(line.encode("utf-8") + b"\n")
         except Exception as exc:
             rospy.logwarn("[referee] write team log (%s) failed: %s", team, exc)
 
     def _on_narrative_event(self, msg):
-        """接收 Manager 等节点发来的叙事（纯文本）。
+        """接收 Manager 等节点发来的叙事（JSON 或纯文本）。
         命令写入对应队伍日志，不写入 narrative。
+        支持结构化 JSON 格式（含 team/event/msg/reason 等字段）。
         """
         raw = msg.data
         try:
@@ -963,7 +976,7 @@ class RefereeNode(object):
                 self._append_team_log(team, record)
                 return
 
-        # 判断消息属于哪队：看 ns 中是否包含 red/blue
+        # 兼容旧版纯文本格式：判断消息属于哪队
         raw_lower = raw.lower()
         team = None
         if "red" in raw_lower:
@@ -1085,11 +1098,6 @@ class RefereeNode(object):
                     "%s(%.1f,%.1f) fires — missed all enemies (ammo=%d)"
                     % (s_name, sx, sy, int(shooter["ammo"])),
                 )
-                # 队伍日志：攻击未命中
-                self._append_team_log(shooter_team, {
-                    "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
-                    "hit": False,
-                })
                 rospy.loginfo(
                     "[referee] fire from %s missed all enemies (ray_hit or LOS blocked)",
                     shooter_ns,
@@ -1141,15 +1149,6 @@ class RefereeNode(object):
                     "%s(%.1f,%.1f) KILLED %s(%.1f,%.1f) (hp:%d->0 ammo=%d)"
                     % (s_name, sx, sy, e_name, ex, ey, old_hp, int(shooter["ammo"])),
                 )
-                # 队伍日志：攻击方击杀，受击方阵亡
-                self._append_team_log(shooter_team, {
-                    "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
-                    "target": e_name, "hit": True, "killed": True,
-                })
-                self._append_team_log(enemy_team, {
-                    "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
-                    "attacker": s_name, "killed": True,
-                })
                 rospy.loginfo("[referee] KILL: shooter=%s target=%s", shooter_ns, enemy_ns)
 
             else:
@@ -1165,15 +1164,6 @@ class RefereeNode(object):
                     "%s(%.1f,%.1f) hits %s(%.1f,%.1f) (hp:%d->%d ammo=%d)"
                     % (s_name, sx, sy, e_name, ex, ey, old_hp, new_hp, int(shooter["ammo"])),
                 )
-                # 队伍日志：攻击命中，受击
-                self._append_team_log(shooter_team, {
-                    "event": "attack", "shooter": s_name, "pos": [round(sx,1), round(sy,1)],
-                    "target": e_name, "hit": True, "killed": False,
-                })
-                self._append_team_log(enemy_team, {
-                    "event": "hit", "target": e_name, "pos": [round(ex,1), round(ey,1)],
-                    "attacker": s_name, "killed": False,
-                })
 
     def _angle_diff(self, a, b):
         return math.atan2(math.sin(a - b), math.cos(a - b))
@@ -1284,12 +1274,49 @@ class RefereeNode(object):
         msg.blue = blue
         self.macro_state_pub.publish(msg)
 
+    def _log_global_positions_to_narrative(self):
+        """每秒记录一次所有小车位置到全局叙事文件。
+        格式：{"t": ..., "event": "position", "positions": {"red": [...], "blue": [...]}}
+        队伍日志（red_log/blue_log）只保留主观信息，不写位置。
+        """
+        elapsed = time.time() - self._match_start_wall if self._match_start_wall > 0 else 0.0
+        positions = {"red": [], "blue": []}
+        for ns, state in sorted(self.global_states.items()):
+            team = state.get("team", "")
+            if team not in ("red", "blue"):
+                continue
+            ns_short = self._shorten_ns(ns)
+            entry = {
+                "ns": ns_short,
+                "x": round(float(state.get("x", 0.0)), 2),
+                "y": round(float(state.get("y", 0.0)), 2),
+                "hp": int(state.get("hp", 0)),
+                "ammo": int(state.get("ammo", 0)),
+                "alive": bool(state.get("alive", True) and int(state.get("hp", 0)) > 0),
+            }
+            positions[team].append(entry)
+
+        # 写入叙事文件（与 _append_narrative 共享相同的写入逻辑）
+        obj = OrderedDict()
+        obj["t"] = round(elapsed, 2)
+        obj["event"] = "position"
+        obj["positions"] = positions
+        line = json.dumps(obj, ensure_ascii=False)
+        self._narrative.append(line)
+        if self._narrative_path:
+            try:
+                with open(self._narrative_path, "ab") as f:
+                    f.write(line.encode("utf-8") + b"\n")
+            except Exception as exc:
+                rospy.logwarn("[referee] write narrative position log failed: %s", exc)
+
     def run(self):
         main_rate = rospy.Rate(self.loop_hz)
         discover_interval = 1.0 / self.discover_hz if self.discover_hz > 0.0 else 1.0
         last_discover = 0.0
         game_state_interval = 1.0  # 1 Hz
         last_game_state = 0.0
+        position_log_interval = 1.0  # 每秒记录一次位置
 
         while not rospy.is_shutdown():
             now = rospy.Time.now().to_sec()
@@ -1305,6 +1332,11 @@ class RefereeNode(object):
                 # 比赛结束后持续发 STOP，压制 Manager 后续发来的任务
                 if self._match_status == "FINISHED":
                     self._stop_all_robots()
+
+                # 每秒记录一次全局位置到叙事文件
+                if self._match_status == "PLAYING" and (now - self._last_position_log_time >= position_log_interval):
+                    self._log_global_positions_to_narrative()
+                    self._last_position_log_time = now
 
             self._publish_visible_enemies()
             self._publish_macro_state()
