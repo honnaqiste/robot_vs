@@ -6,10 +6,8 @@ import threading
 import rospy
 from robot_vs.msg import RobotState, VisibleEnemies
 
-from interfaces import BaseObserver
 
-
-class GlobalObserver(BaseObserver):
+class GlobalObserver:
 	"""观测己方机器人状态与裁判系统敌方状态。
 
 	职责：
