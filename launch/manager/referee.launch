@@ -8,9 +8,6 @@
         output="screen"
         required="true">
     <rosparam command="load" file="$(arg referee_param_file)" />
-    <param name="experiment" value="mas_vs_mas" />
-    <param name="default_ammo" value="25" />
-    <param name="time_limit" value="120" />
   </node>
 
   <node pkg="robot_vs"
